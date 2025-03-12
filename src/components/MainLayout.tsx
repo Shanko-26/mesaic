@@ -9,7 +9,16 @@ import Session from './Collaboration/Session';
 import Annotations from './Collaboration/Annotations';
 import { FileSelector } from './FileManagement/FileSelector';
 import { FileData, getFileData } from '../services/file';
-import { PlotData, generatePlotData, zoomIn, zoomOut, resetZoom } from '../services/visualization';
+import { 
+  PlotData, 
+  generatePlotData, 
+  zoomIn, 
+  zoomOut, 
+  resetZoom, 
+  CursorData,
+  updateCursors,
+  debugPlotly
+} from '../services/visualization';
 import { processNaturalLanguageQuery, QueryResult } from '../services/ai';
 import { initSocket, joinSession, leaveSession, addAnnotation, deleteAnnotation } from '../services/socket';
 import { checkServerHealth } from '../services/api';
@@ -32,6 +41,20 @@ export function MainLayout() {
   const [selectedSignals, setSelectedSignals] = useState<string[]>([]);
   const [plotData, setPlotData] = useState<PlotData | undefined>(undefined);
   const [isPlotLoading, setIsPlotLoading] = useState(false);
+  
+  // Cursor state
+  const [primaryCursor, setPrimaryCursor] = useState<CursorData>({
+    x: 0,
+    visible: false,
+    color: 'rgba(255, 0, 0, 0.75)',
+    label: 'Primary'
+  });
+  const [diffCursor, setDiffCursor] = useState<CursorData>({
+    x: 0,
+    visible: false,
+    color: 'rgba(0, 0, 255, 0.75)',
+    label: 'Diff'
+  });
   
   // Query state
   const [query, setQuery] = useState<string | undefined>(undefined);
@@ -83,6 +106,8 @@ export function MainLayout() {
   
   // Handle file loaded
   const handleFileLoaded = (filePath: string) => {
+    console.log(`===== FILE LOADED =====`);
+    console.log(`File loaded: ${filePath}`);
     setIsFileLoading(true);
     setFileError(null);
     
@@ -90,10 +115,20 @@ export function MainLayout() {
       const data = getFileData();
       
       if (!data) {
+        console.error('Failed to get file data');
         throw new Error('Failed to get file data');
       }
       
       console.log('File data loaded:', data);
+      console.log('File data structure:', {
+        signals: data.signals,
+        hasTimeSignal: data.signals.includes('time'),
+        signalCount: data.signals.length,
+        dataKeys: Object.keys(data.data),
+        timeDataType: data.data.time ? typeof data.data.time : 'undefined',
+        timeDataLength: data.data.time ? data.data.time.length : 0,
+        timeDataRange: data.data.time ? `${data.data.time[0]} to ${data.data.time[data.data.time.length - 1]}` : 'N/A'
+      });
       
       // Filter out time from signals for selection
       const dataSignals = data.signals.filter(s => s !== 'time');
@@ -103,18 +138,36 @@ export function MainLayout() {
       
       // Select up to 4 signals for initial visualization
       const initialSignals = dataSignals.slice(0, Math.min(4, dataSignals.length));
+      console.log(`Selected initial signals for visualization:`, initialSignals);
       setSelectedSignals(initialSignals);
       
       // Generate plot data
       setIsPlotLoading(true);
+      console.log('Generating initial plot data');
       const newPlotData = generatePlotData(data, initialSignals);
+      console.log('Initial plot data generated:', {
+        traces: newPlotData.data.length,
+        layout: Object.keys(newPlotData.layout),
+        config: Object.keys(newPlotData.config)
+      });
       setPlotData(newPlotData);
       setIsPlotLoading(false);
+      
+      // Reset cursors
+      console.log('Resetting cursors to default state');
+      setPrimaryCursor(prev => ({ ...prev, visible: false, x: 0 }));
+      setDiffCursor(prev => ({ ...prev, visible: false, x: 0 }));
     } catch (error) {
       console.error('Error handling file loaded:', error);
+      console.log('Error details:', {
+        name: error instanceof Error ? error.name : 'Unknown',
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : 'No stack trace'
+      });
       setFileError(`Error loading file: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setIsFileLoading(false);
+      console.log(`===== END FILE LOADED =====`);
     }
   };
   
@@ -132,12 +185,273 @@ export function MainLayout() {
       
       // Update plot data
       if (fileData) {
-        const newPlotData = generatePlotData(fileData, newSelectedSignals);
+        const newPlotData = generatePlotData(
+          fileData, 
+          newSelectedSignals,
+          undefined,
+          primaryCursor,
+          diffCursor
+        );
         setPlotData(newPlotData);
       }
       
       return newSelectedSignals;
     });
+  };
+  
+  // Handle cursor move
+  const handleCursorMove = (x: number, isPrimary: boolean) => {
+    console.log(`===== CURSOR MOVE =====`);
+    console.log(`MainLayout: handleCursorMove called with x=${x}, isPrimary=${isPrimary}`);
+    console.log('Current cursor states:', {
+      primaryCursor: { ...primaryCursor },
+      diffCursor: { ...diffCursor }
+    });
+    
+    if (isPrimary) {
+      // Update primary cursor
+      const updated = { ...primaryCursor, x, visible: true };
+      console.log(`Primary cursor will be updated to:`, updated);
+      setPrimaryCursor(updated);
+      console.log(`Primary cursor updated to x=${x}, visible=true`);
+      
+      // Update plot data with new cursor position
+      if (fileData) {
+        try {
+          console.log('Attempting to directly update cursor on plot');
+          // First directly update the cursor on the plot for immediate feedback
+          updateCursors('plot-container', updated, diffCursor)
+            .then(() => {
+              console.log('Primary cursor updated on plot successfully');
+              
+              // Then update the plot data for a complete refresh
+              console.log('Generating new plot data with updated cursor');
+              const newPlotData = generatePlotData(
+                fileData,
+                selectedSignals,
+                undefined,
+                updated,
+                diffCursor
+              );
+              console.log('New plot data generated, updating state');
+              setPlotData(newPlotData);
+            })
+            .catch((error) => {
+              console.error('Error directly updating primary cursor:', error);
+              console.log('Error details:', {
+                name: error instanceof Error ? error.name : 'Unknown',
+                message: error instanceof Error ? error.message : String(error)
+              });
+            });
+        } catch (error) {
+          console.error('Error updating plot after primary cursor move:', error);
+          console.log('Error details:', {
+            name: error instanceof Error ? error.name : 'Unknown',
+            message: error instanceof Error ? error.message : String(error)
+          });
+        }
+      } else {
+        console.log('No file data available, skipping plot update');
+      }
+    } else {
+      // Update diff cursor
+      const updated = { ...diffCursor, x, visible: true };
+      console.log(`Diff cursor will be updated to:`, updated);
+      setDiffCursor(updated);
+      console.log(`Diff cursor updated to x=${x}, visible=true`);
+      
+      // Update plot data with new cursor position
+      if (fileData) {
+        try {
+          console.log('Attempting to directly update cursor on plot');
+          // First directly update the cursor on the plot for immediate feedback
+          updateCursors('plot-container', primaryCursor, updated)
+            .then(() => {
+              console.log('Diff cursor updated on plot successfully');
+              
+              // Then update the plot data for a complete refresh
+              console.log('Generating new plot data with updated cursor');
+              const newPlotData = generatePlotData(
+                fileData,
+                selectedSignals,
+                undefined,
+                primaryCursor,
+                updated
+              );
+              console.log('New plot data generated, updating state');
+              setPlotData(newPlotData);
+            })
+            .catch((error) => {
+              console.error('Error directly updating diff cursor:', error);
+              console.log('Error details:', {
+                name: error instanceof Error ? error.name : 'Unknown',
+                message: error instanceof Error ? error.message : String(error)
+              });
+            });
+        } catch (error) {
+          console.error('Error updating plot after diff cursor move:', error);
+          console.log('Error details:', {
+            name: error instanceof Error ? error.name : 'Unknown',
+            message: error instanceof Error ? error.message : String(error)
+          });
+        }
+      } else {
+        console.log('No file data available, skipping plot update');
+      }
+    }
+    console.log(`===== END CURSOR MOVE =====`);
+  };
+  
+  // Toggle primary cursor visibility
+  const handleTogglePrimaryCursor = () => {
+    console.log(`===== TOGGLE PRIMARY CURSOR =====`);
+    console.log(`MainLayout: handleTogglePrimaryCursor called`);
+    console.log('Current cursor states:', {
+      primaryCursor: { ...primaryCursor },
+      diffCursor: { ...diffCursor }
+    });
+    
+    // Debug Plotly before toggle
+    debugPlotly('plot-container');
+    
+    // Update primary cursor
+    const updated = { ...primaryCursor, visible: !primaryCursor.visible };
+    console.log(`Primary cursor visibility will be toggled from ${primaryCursor.visible} to ${updated.visible}`);
+    setPrimaryCursor(updated);
+    console.log(`Primary cursor visibility toggled to ${updated.visible}`);
+    
+    // Update plot data with new cursor state
+    if (fileData) {
+      try {
+        console.log('Attempting to directly update cursor on plot');
+        // First directly update the cursor on the plot for immediate feedback
+        updateCursors('plot-container', updated, diffCursor)
+          .then(() => {
+            console.log('Primary cursor visibility updated on plot successfully');
+            // Debug Plotly after update
+            setTimeout(() => {
+              debugPlotly('plot-container');
+            }, 500);
+          })
+          .catch(error => {
+            console.error('Error directly updating primary cursor visibility:', error);
+            console.log('Error details:', {
+              name: error instanceof Error ? error.name : 'Unknown',
+              message: error instanceof Error ? error.message : String(error)
+            });
+          });
+        
+        console.log('Generating new plot data with updated cursor visibility');
+        // Then update the plot data for a complete refresh
+        const newPlotData = generatePlotData(
+          fileData,
+          selectedSignals,
+          undefined,
+          updated,
+          diffCursor
+        );
+        console.log('New plot data generated with updated cursor visibility, updating state');
+        setPlotData(newPlotData);
+      } catch (error) {
+        console.error('Error updating plot after toggling primary cursor:', error);
+        console.log('Error details:', {
+          name: error instanceof Error ? error.name : 'Unknown',
+          message: error instanceof Error ? error.message : String(error)
+        });
+      }
+    } else {
+      console.log('No file data available, skipping plot update');
+    }
+    console.log(`===== END TOGGLE PRIMARY CURSOR =====`);
+  };
+  
+  // Toggle diff cursor visibility
+  const handleToggleDiffCursor = () => {
+    console.log(`===== TOGGLE DIFF CURSOR =====`);
+    console.log(`MainLayout: handleToggleDiffCursor called`);
+    console.log('Current cursor states:', {
+      primaryCursor: { ...primaryCursor },
+      diffCursor: { ...diffCursor }
+    });
+    
+    // Update diff cursor
+    const updated = { ...diffCursor, visible: !diffCursor.visible };
+    console.log(`Diff cursor visibility will be toggled from ${diffCursor.visible} to ${updated.visible}`);
+    setDiffCursor(updated);
+    console.log(`Diff cursor visibility toggled to ${updated.visible}`);
+    
+    // Update plot data with new cursor state
+    if (fileData) {
+      try {
+        console.log('Attempting to directly update cursor on plot');
+        // First directly update the cursor on the plot for immediate feedback
+        updateCursors('plot-container', primaryCursor, updated)
+          .then(() => console.log('Diff cursor visibility updated on plot successfully'))
+          .catch(error => {
+            console.error('Error directly updating diff cursor visibility:', error);
+            console.log('Error details:', {
+              name: error instanceof Error ? error.name : 'Unknown',
+              message: error instanceof Error ? error.message : String(error)
+            });
+          });
+        
+        console.log('Generating new plot data with updated cursor visibility');
+        // Then update the plot data for a complete refresh
+        const newPlotData = generatePlotData(
+          fileData,
+          selectedSignals,
+          undefined,
+          primaryCursor,
+          updated
+        );
+        console.log('New plot data generated with updated cursor visibility, updating state');
+        setPlotData(newPlotData);
+      } catch (error) {
+        console.error('Error updating plot after toggling diff cursor:', error);
+        console.log('Error details:', {
+          name: error instanceof Error ? error.name : 'Unknown',
+          message: error instanceof Error ? error.message : String(error)
+        });
+      }
+    } else {
+      console.log('No file data available, skipping plot update');
+    }
+    console.log(`===== END TOGGLE DIFF CURSOR =====`);
+  };
+  
+  // Reset cursors
+  const handleResetCursors = () => {
+    console.log(`MainLayout: handleResetCursors called`);
+    
+    // Reset cursor states
+    const resetPrimary = { ...primaryCursor, visible: false, x: 0 };
+    const resetDiff = { ...diffCursor, visible: false, x: 0 };
+    
+    setPrimaryCursor(resetPrimary);
+    setDiffCursor(resetDiff);
+    console.log('Cursors reset to default state');
+    
+    // Update plot data with reset cursor state
+    if (fileData) {
+      try {
+        // First directly update the cursor on the plot for immediate feedback
+        updateCursors('plot-container', resetPrimary, resetDiff)
+          .then(() => console.log('Cursors reset on plot'))
+          .catch(error => console.error('Error directly resetting cursors:', error));
+        
+        // Then update the plot data for a complete refresh
+        const newPlotData = generatePlotData(
+          fileData,
+          selectedSignals,
+          undefined,
+          resetPrimary,
+          resetDiff
+        );
+        setPlotData(newPlotData);
+      } catch (error) {
+        console.error('Error updating plot after resetting cursors:', error);
+      }
+    }
   };
   
   // Handle zoom in
@@ -274,103 +588,83 @@ export function MainLayout() {
   };
   
   return (
-    <div className="flex flex-col h-screen">
+    <div className="flex flex-col h-screen bg-slate-50">
       {/* Header */}
-      <header className="bg-blue-600 text-white p-4 shadow-md">
-        <h1 className="text-2xl font-bold">MesAIc - AI-Driven Measurement Analysis</h1>
+      <header className="bg-white border-b border-slate-200 p-4">
+        <div className="container mx-auto">
+          <h1 className="text-2xl font-bold text-slate-800">MesAIc</h1>
+          <p className="text-sm text-slate-500">AI-Powered Measurement Analysis Tool</p>
+        </div>
       </header>
       
-      {/* Main content */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Left Sidebar */}
-        <div className="w-80 bg-white p-4 overflow-y-auto flex flex-col border-r border-slate-200">
-          {/* Server status */}
-          <div className="mb-4">
-            <div className="flex items-center">
-              <div className={`w-3 h-3 rounded-full mr-2 ${isServerRunning ? 'bg-green-500' : 'bg-red-500'}`}></div>
-              <span className="text-sm text-slate-800">
-                Server: {isServerRunning ? 'Running' : 'Not Running'}
-              </span>
+      {/* Main Content */}
+      <main className="flex-1 overflow-hidden">
+        <div className="container mx-auto p-4 h-full">
+          <div className="grid grid-cols-12 gap-4 h-full">
+            {/* Left Sidebar */}
+            <div className="col-span-3 flex flex-col space-y-4 overflow-y-auto">
+              {/* File Selection */}
+              <FileSelector 
+                onFileLoaded={handleFileLoaded} 
+                onError={handleFileError}
+                isLoading={isFileLoading}
+                error={fileError}
+              />
+              
+              {/* Controls */}
+              <Controls 
+                signals={signals}
+                selectedSignals={selectedSignals}
+                onSignalToggle={handleSignalToggle}
+                onZoomIn={handleZoomIn}
+                onZoomOut={handleZoomOut}
+                onReset={handleResetZoom}
+                isPrimaryCursorVisible={primaryCursor.visible}
+                isDiffCursorVisible={diffCursor.visible}
+                onTogglePrimaryCursor={handleTogglePrimaryCursor}
+                onToggleDiffCursor={handleToggleDiffCursor}
+                onResetCursors={handleResetCursors}
+              />
+              
+              {/* Collaboration */}
+              <Session 
+                isConnected={isConnected}
+                sessionId={sessionId}
+                onCreateSession={handleCreateSession}
+                onJoinSession={handleJoinSession}
+                activeUsers={activeUsers}
+              />
             </div>
-          </div>
-          
-          {/* File selector */}
-          <div className="mb-6 border border-slate-200 rounded-md p-3 bg-slate-50">
-            <h2 className="text-lg font-semibold mb-2 text-slate-800">File Management</h2>
-            <FileSelector 
-              onFileLoaded={handleFileLoaded}
-              onError={handleFileError}
-              isLoading={isFileLoading}
-            />
-            {fileError && (
-              <div className="mt-2 text-red-500 text-sm">
-                {fileError}
+            
+            {/* Main Content Area */}
+            <div className="col-span-6 flex flex-col space-y-4 overflow-hidden">
+              {/* Plot Area */}
+              <div className="flex-1 bg-white rounded-md border border-slate-200 overflow-hidden">
+                <PlotArea 
+                  plotData={plotData} 
+                  isLoading={isPlotLoading}
+                  fileData={fileData || undefined}
+                  selectedSignals={selectedSignals}
+                  primaryCursor={primaryCursor}
+                  diffCursor={diffCursor}
+                  onCursorMove={handleCursorMove}
+                />
               </div>
-            )}
-          </div>
-          
-          {/* Controls */}
-          <div className="mb-6 border border-slate-200 rounded-md p-3 bg-slate-50">
-            <h2 className="text-lg font-semibold mb-2 text-slate-800">Visualization Controls</h2>
-            <Controls 
-              signals={signals}
-              selectedSignals={selectedSignals}
-              onSignalToggle={handleSignalToggle}
-              onZoomIn={handleZoomIn}
-              onZoomOut={handleZoomOut}
-              onReset={handleResetZoom}
-            />
-          </div>
-          
-          {/* Collaboration */}
-          <div className="mt-auto border border-slate-200 rounded-md p-3 bg-slate-50">
-            <h2 className="text-lg font-semibold mb-2 text-slate-800">Collaboration</h2>
-            <Session 
-              sessionId={sessionId}
-              onJoinSession={handleJoinSession}
-              onCreateSession={handleCreateSession}
-              isConnected={isConnected}
-              activeUsers={activeUsers}
-            />
-          </div>
-        </div>
-        
-        {/* Main content area */}
-        <div className="flex-1 p-4 overflow-hidden flex flex-col bg-white">
-          {/* Visualization */}
-          <div className="flex-1 mb-4 min-h-0">
-            <h2 className="text-xl font-semibold mb-2 text-slate-800">Visualization</h2>
-            <div className="h-[calc(100%-2rem)] border border-slate-200 rounded-md overflow-hidden bg-white shadow-sm">
-              <PlotArea 
-                plotData={plotData}
-                isLoading={isPlotLoading}
-              />
+              
+              {/* Query Input */}
+              <div className="bg-white rounded-md border border-slate-200 p-4">
+                <QueryInput 
+                  onSubmit={handleQuerySubmit}
+                  isLoading={isQueryLoading}
+                  isDisabled={!fileData || !isServerRunning}
+                />
+              </div>
             </div>
-          </div>
-          
-          {/* AI Query */}
-          <div className="mb-4 max-h-[300px] overflow-y-auto">
-            <div className="flex justify-between items-center mb-2">
-              <h2 className="text-xl font-semibold text-slate-800">AI Query</h2>
-              {(query || answer || queryError) && (
-                <button 
-                  onClick={() => {
-                    setQuery(undefined);
-                    setAnswer(undefined);
-                    setQueryError(undefined);
-                  }}
-                  className="text-sm text-blue-600 hover:text-blue-800"
-                >
-                  Clear Results
-                </button>
-              )}
-            </div>
-            <div className="bg-white border border-slate-200 rounded-md shadow-sm">
-              <QueryInput 
-                onSubmit={handleQuerySubmit}
-                isLoading={isQueryLoading}
-              />
-              <div className="mt-2">
+            
+            {/* Right Sidebar */}
+            <div className="col-span-3 flex flex-col space-y-4 overflow-y-auto">
+              {/* Results */}
+              <div className="bg-white rounded-md border border-slate-200 p-4 flex-1">
                 <Results 
                   query={query}
                   answer={answer}
@@ -378,25 +672,36 @@ export function MainLayout() {
                   isLoading={isQueryLoading}
                 />
               </div>
+              
+              {/* Annotations */}
+              <div className="bg-white rounded-md border border-slate-200 p-4 flex-1">
+                <Annotations 
+                  annotations={annotations}
+                  onAddAnnotation={handleAddAnnotation}
+                  onDeleteAnnotation={handleDeleteAnnotation}
+                  isConnected={isConnected}
+                />
+              </div>
             </div>
           </div>
         </div>
-        
-        {/* Annotations sidebar */}
-        <div className="w-80 bg-slate-800 text-white p-4 overflow-y-auto">
-          <h2 className="text-xl font-semibold mb-2">Annotations</h2>
-          <Annotations 
-            annotations={annotations}
-            onAddAnnotation={handleAddAnnotation}
-            onDeleteAnnotation={handleDeleteAnnotation}
-            isConnected={isConnected}
-          />
-        </div>
-      </div>
+      </main>
       
       {/* Footer */}
-      <footer className="bg-slate-800 text-white p-2 text-center text-sm">
-        MesAIc - AI-Driven Measurement Analysis Tool &copy; {new Date().getFullYear()}
+      <footer className="bg-white border-t border-slate-200 p-2">
+        <div className="container mx-auto">
+          <div className="flex justify-between items-center">
+            <p className="text-xs text-slate-500">
+              &copy; {new Date().getFullYear()} MesAIc
+            </p>
+            <div className="flex items-center">
+              <span className={`inline-block w-2 h-2 rounded-full mr-1 ${isServerRunning ? 'bg-green-500' : 'bg-red-500'}`}></span>
+              <p className="text-xs text-slate-500">
+                {isServerRunning ? 'Server Connected' : 'Server Disconnected'}
+              </p>
+            </div>
+          </div>
+        </div>
       </footer>
     </div>
   );

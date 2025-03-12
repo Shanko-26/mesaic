@@ -7,8 +7,9 @@ import { loadSampleFile, sampleData } from '../data/sampleData';
 export interface FileInfo {
   name: string;
   path: string;
-  size: number;
-  lastModified: Date;
+  size?: number;
+  lastModified?: Date;
+  lastOpened?: string;
 }
 
 export interface FileData {
