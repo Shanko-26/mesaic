@@ -52,16 +52,23 @@ export async function loadFile(filePath: string): Promise<any> {
  * Process a natural language query
  * @param {string} query - The query text
  * @param {string} filePath - Path to the file being analyzed
+ * @param {any} context - Optional context about the current visualization state
+ * @param {boolean} useOpenAI - Whether to use OpenAI for processing (if available)
  * @returns {Promise<any>} Query results
  */
-export async function processQuery(query: string, filePath: string): Promise<any> {
+export async function processQuery(
+  query: string, 
+  filePath: string, 
+  context?: any, 
+  useOpenAI: boolean = true
+): Promise<any> {
   try {
     // Check if server is running
     const isServerRunning = await checkServerHealth();
     
     if (!isServerRunning) {
       console.warn('Server is not running, using mock AI response');
-      return mockProcessQuery(query, filePath);
+      return mockProcessQuery(query, filePath, context);
     }
     
     const response = await fetch(`${API_BASE_URL}/process-query`, {
@@ -69,7 +76,7 @@ export async function processQuery(query: string, filePath: string): Promise<any
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ query, filePath }),
+      body: JSON.stringify({ query, filePath, context, use_openai: useOpenAI }),
     });
     
     const data = await response.json();
@@ -78,11 +85,18 @@ export async function processQuery(query: string, filePath: string): Promise<any
       throw new Error(data.error || 'Failed to process query');
     }
     
+    // Log if OpenAI was used
+    if (data.used_openai) {
+      console.log('Query was processed using OpenAI');
+    } else {
+      console.log('Query was processed using built-in processor');
+    }
+    
     return data.data;
   } catch (error) {
     console.error('Error processing query:', error);
     // Fallback to mock response
-    return mockProcessQuery(query, filePath);
+    return mockProcessQuery(query, filePath, context);
   }
 }
 
@@ -90,13 +104,19 @@ export async function processQuery(query: string, filePath: string): Promise<any
  * Generate a mock response for a query
  * @param {string} query - The query text
  * @param {string} filePath - Path to the file being analyzed
+ * @param {any} context - Optional context about the current visualization state
  * @returns {Promise<any>} Mock query results
  */
-function mockProcessQuery(query: string, filePath: string): Promise<any> {
+function mockProcessQuery(query: string, filePath: string, context?: any): Promise<any> {
   // Simulate network delay
   return new Promise((resolve) => {
     setTimeout(() => {
       const lowerQuery = query.toLowerCase();
+      
+      // If we have context, log it for debugging
+      if (context) {
+        console.log('Mock processing query with context:', context);
+      }
       
       // Generate different responses based on the query
       let answer = '';

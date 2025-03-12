@@ -5,6 +5,7 @@ import { PlotArea } from './Visualization/PlotArea';
 import Controls from './Visualization/Controls';
 import QueryInput from './Query/QueryInput';
 import Results from './Query/Results';
+import SuggestedQueries from './Query/SuggestedQueries';
 import Session from './Collaboration/Session';
 import Annotations from './Collaboration/Annotations';
 import { FileSelector } from './FileManagement/FileSelector';
@@ -19,7 +20,7 @@ import {
   updateCursors,
   debugPlotly
 } from '../services/visualization';
-import { processNaturalLanguageQuery, QueryResult } from '../services/ai';
+import { processNaturalLanguageQuery, QueryResult, QueryContext } from '../services/ai';
 import { initSocket, joinSession, leaveSession, addAnnotation, deleteAnnotation } from '../services/socket';
 import { checkServerHealth } from '../services/api';
 
@@ -70,6 +71,15 @@ export function MainLayout() {
   
   // Server health check
   const [isServerRunning, setIsServerRunning] = useState(false);
+  
+  // Add a state for metadata
+  const [queryMetadata, setQueryMetadata] = useState<any>(undefined);
+  
+  // UI state for responsive layout
+  const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false);
+  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
+  const [activeTab, setActiveTab] = useState<'plot' | 'query'>('plot');
+  const [rightPanelTab, setRightPanelTab] = useState<'chat' | 'annotations'>('chat');
   
   // Check server health on component mount
   useEffect(() => {
@@ -475,10 +485,33 @@ export function MainLayout() {
     setQuery(queryText);
     setAnswer(undefined);
     setQueryError(undefined);
+    setQueryMetadata(undefined);
     
     try {
-      const result: QueryResult = await processNaturalLanguageQuery(queryText);
+      // Create context object with current visualization state
+      const queryContext = {
+        selectedSignals,
+        primaryCursor: primaryCursor.visible ? primaryCursor : undefined,
+        diffCursor: diffCursor.visible ? diffCursor : undefined,
+        // Add time range if available from the plot data
+        timeRange: plotData?.layout?.xaxis?.range as [number, number] | undefined
+      };
+      
+      console.log('Submitting query with context:', {
+        query: queryText,
+        context: queryContext
+      });
+      
+      const result: QueryResult = await processNaturalLanguageQuery(queryText, queryContext);
+      
       setAnswer(result.answer);
+      setQueryMetadata(result.metadata);
+      
+      // If the result includes a visualization suggestion, update the plot
+      if (result.metadata?.visualizationSuggestion && fileData) {
+        console.log('Received visualization suggestion from AI:', result.metadata.visualizationSuggestion);
+        setPlotData(result.metadata.visualizationSuggestion);
+      }
     } catch (error) {
       console.error('Error processing query:', error);
       setQueryError(`Error processing query: ${error instanceof Error ? error.message : String(error)}`);
@@ -560,6 +593,16 @@ export function MainLayout() {
     setAnnotations(prev => prev.filter(a => a.id !== annotationId));
   };
   
+  // Handle toggle left panel
+  const handleToggleLeftPanel = () => {
+    setLeftPanelCollapsed(!leftPanelCollapsed);
+  };
+  
+  // Handle toggle right panel
+  const handleToggleRightPanel = () => {
+    setRightPanelCollapsed(!rightPanelCollapsed);
+  };
+  
   // Handle add annotation
   const handleAddAnnotation = (text: string) => {
     if (!sessionId || !isConnected) return;
@@ -590,56 +633,190 @@ export function MainLayout() {
   return (
     <div className="flex flex-col h-screen bg-slate-50">
       {/* Header */}
-      <header className="bg-white border-b border-slate-200 p-4">
+      <header className="bg-white border-b border-slate-200 p-2 md:p-4">
         <div className="container mx-auto">
-          <h1 className="text-2xl font-bold text-slate-800">MesAIc</h1>
-          <p className="text-sm text-slate-500">AI-Powered Measurement Analysis Tool</p>
+          <div className="flex justify-between items-center">
+            <div>
+              <h1 className="text-xl md:text-2xl font-bold text-slate-800">MesAIc</h1>
+              <p className="text-xs md:text-sm text-slate-500">AI-Powered Measurement Analysis Tool</p>
+            </div>
+            <div className="flex items-center space-x-2">
+              <button 
+                onClick={() => setActiveTab('plot')}
+                className={`px-3 py-1 text-sm rounded-md ${activeTab === 'plot' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-700'}`}
+              >
+                Plot
+              </button>
+              <button 
+                onClick={() => setActiveTab('query')}
+                className={`px-3 py-1 text-sm rounded-md ${activeTab === 'query' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-700'}`}
+              >
+                AI Query
+              </button>
+            </div>
+          </div>
         </div>
       </header>
       
       {/* Main Content */}
       <main className="flex-1 overflow-hidden">
-        <div className="container mx-auto p-4 h-full">
-          <div className="grid grid-cols-12 gap-4 h-full">
-            {/* Left Sidebar */}
-            <div className="col-span-3 flex flex-col space-y-4 overflow-y-auto">
-              {/* File Selection */}
-              <FileSelector 
-                onFileLoaded={handleFileLoaded} 
-                onError={handleFileError}
-                isLoading={isFileLoading}
-                error={fileError}
-              />
-              
-              {/* Controls */}
-              <Controls 
-                signals={signals}
-                selectedSignals={selectedSignals}
-                onSignalToggle={handleSignalToggle}
-                onZoomIn={handleZoomIn}
-                onZoomOut={handleZoomOut}
-                onReset={handleResetZoom}
-                isPrimaryCursorVisible={primaryCursor.visible}
-                isDiffCursorVisible={diffCursor.visible}
-                onTogglePrimaryCursor={handleTogglePrimaryCursor}
-                onToggleDiffCursor={handleToggleDiffCursor}
-                onResetCursors={handleResetCursors}
-              />
-              
-              {/* Collaboration */}
-              <Session 
-                isConnected={isConnected}
-                sessionId={sessionId}
-                onCreateSession={handleCreateSession}
-                onJoinSession={handleJoinSession}
-                activeUsers={activeUsers}
-              />
-            </div>
+        <div className="h-full flex">
+          {/* Left Sidebar - Collapsible */}
+          <div className={`flex flex-col border-r border-slate-200 bg-white transition-all duration-300 ${leftPanelCollapsed ? 'w-10' : 'w-64 md:w-80'}`}>
+            {/* Toggle button */}
+            <button 
+              onClick={handleToggleLeftPanel}
+              className="p-2 text-slate-500 hover:text-slate-700 self-end"
+            >
+              {leftPanelCollapsed ? '→' : '←'}
+            </button>
             
-            {/* Main Content Area */}
-            <div className="col-span-6 flex flex-col space-y-4 overflow-hidden">
-              {/* Plot Area */}
-              <div className="flex-1 bg-white rounded-md border border-slate-200 overflow-hidden">
+            {!leftPanelCollapsed && (
+              <div className="flex-1 overflow-y-auto p-3 space-y-4">
+                {/* File Selection */}
+                <FileSelector 
+                  onFileLoaded={handleFileLoaded} 
+                  onError={handleFileError}
+                  isLoading={isFileLoading}
+                  error={fileError}
+                />
+                
+                {/* Signal Selection */}
+                <div className="bg-white rounded-md border border-slate-200 p-4">
+                  <h3 className="text-sm font-medium mb-3 text-slate-800">Signals</h3>
+                  <div className="max-h-48 overflow-y-auto pr-1">
+                    {signals.length === 0 ? (
+                      <p className="text-sm text-slate-500 italic">No signals available. Please load a file.</p>
+                    ) : (
+                      signals.map(signal => (
+                        <div key={signal} className="flex items-center mb-2 hover:bg-slate-50 rounded p-1">
+                          <input
+                            type="checkbox"
+                            id={`signal-${signal}`}
+                            checked={selectedSignals.includes(signal)}
+                            onChange={() => handleSignalToggle(signal)}
+                            className="mr-2 h-4 w-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500"
+                          />
+                          <label 
+                            htmlFor={`signal-${signal}`} 
+                            className={`text-sm cursor-pointer ${selectedSignals.includes(signal) ? 'font-medium text-blue-700' : 'text-slate-700'}`}
+                          >
+                            {signal}
+                          </label>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                  {signals.length > 0 && (
+                    <div className="mt-2 pt-2 border-t border-slate-100 flex justify-between">
+                      <button 
+                        onClick={() => setSelectedSignals([])} 
+                        className="text-xs text-slate-500 hover:text-slate-700"
+                      >
+                        Clear All
+                      </button>
+                      <button 
+                        onClick={() => setSelectedSignals([...signals])} 
+                        className="text-xs text-blue-600 hover:text-blue-800"
+                      >
+                        Select All
+                      </button>
+                    </div>
+                  )}
+                </div>
+                
+                {/* Collaboration */}
+                <Session 
+                  isConnected={isConnected}
+                  sessionId={sessionId}
+                  onCreateSession={handleCreateSession}
+                  onJoinSession={handleJoinSession}
+                  activeUsers={activeUsers}
+                />
+              </div>
+            )}
+          </div>
+          
+          {/* Main Content Area */}
+          <div className="flex-1 flex flex-col overflow-hidden">
+            {/* Plot Area with Toolbar */}
+            <div className="flex-1 p-2 md:p-4 overflow-hidden flex flex-col">
+              {/* Toolbar */}
+              <div className="bg-white rounded-t-md border border-b-0 border-slate-200 p-2 flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  {/* Zoom Controls */}
+                  <div className="flex items-center space-x-1 border-r border-slate-200 pr-2">
+                    <button 
+                      onClick={handleZoomIn}
+                      className="p-1 text-slate-500 hover:text-slate-700 bg-slate-100 hover:bg-slate-200 rounded"
+                      title="Zoom In"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M10 5a1 1 0 011 1v3h3a1 1 0 110 2h-3v3a1 1 0 11-2 0v-3H6a1 1 0 110-2h3V6a1 1 0 011-1z" clipRule="evenodd" />
+                      </svg>
+                    </button>
+                    <button 
+                      onClick={handleZoomOut}
+                      className="p-1 text-slate-500 hover:text-slate-700 bg-slate-100 hover:bg-slate-200 rounded"
+                      title="Zoom Out"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M5 10a1 1 0 011-1h8a1 1 0 110 2H6a1 1 0 01-1-1z" clipRule="evenodd" />
+                      </svg>
+                    </button>
+                    <button 
+                      onClick={handleResetZoom}
+                      className="p-1 text-slate-500 hover:text-slate-700 bg-slate-100 hover:bg-slate-200 rounded"
+                      title="Reset Zoom"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clipRule="evenodd" />
+                      </svg>
+                    </button>
+                  </div>
+                  
+                  {/* Cursor Controls */}
+                  <div className="flex items-center space-x-1">
+                    <button 
+                      onClick={handleTogglePrimaryCursor}
+                      className={`p-1 rounded ${primaryCursor.visible ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-500 hover:text-slate-700 hover:bg-slate-200'}`}
+                      title="Toggle Primary Cursor"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                        <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
+                        <path fillRule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clipRule="evenodd" />
+                      </svg>
+                    </button>
+                    <button 
+                      onClick={handleToggleDiffCursor}
+                      className={`p-1 rounded ${diffCursor.visible ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500 hover:text-slate-700 hover:bg-slate-200'}`}
+                      title="Toggle Diff Cursor"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                        <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
+                        <path fillRule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clipRule="evenodd" />
+                      </svg>
+                    </button>
+                    <button 
+                      onClick={handleResetCursors}
+                      className="p-1 text-slate-500 hover:text-slate-700 bg-slate-100 hover:bg-slate-200 rounded"
+                      title="Reset Cursors"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clipRule="evenodd" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+                
+                {/* Cursor Instructions */}
+                <div className="text-xs text-slate-500">
+                  Click to position primary cursor • Shift+Click for diff cursor
+                </div>
+              </div>
+              
+              {/* Plot */}
+              <div className="flex-1 bg-white rounded-b-md border border-slate-200 overflow-hidden">
                 <PlotArea 
                   plotData={plotData} 
                   isLoading={isPlotLoading}
@@ -650,39 +827,100 @@ export function MainLayout() {
                   onCursorMove={handleCursorMove}
                 />
               </div>
-              
-              {/* Query Input */}
-              <div className="bg-white rounded-md border border-slate-200 p-4">
-                <QueryInput 
-                  onSubmit={handleQuerySubmit}
-                  isLoading={isQueryLoading}
-                  isDisabled={!fileData || !isServerRunning}
-                />
-              </div>
             </div>
+          </div>
+          
+          {/* Right Sidebar - Collapsible */}
+          <div className={`flex flex-col border-l border-slate-200 bg-white transition-all duration-300 ${rightPanelCollapsed ? 'w-10' : 'w-72 md:w-96'}`}>
+            {/* Toggle button */}
+            <button 
+              onClick={handleToggleRightPanel}
+              className="p-2 text-slate-500 hover:text-slate-700 self-start"
+            >
+              {rightPanelCollapsed ? '←' : '→'}
+            </button>
             
-            {/* Right Sidebar */}
-            <div className="col-span-3 flex flex-col space-y-4 overflow-y-auto">
-              {/* Results */}
-              <div className="bg-white rounded-md border border-slate-200 p-4 flex-1">
-                <Results 
-                  query={query}
-                  answer={answer}
-                  error={queryError}
-                  isLoading={isQueryLoading}
-                />
+            {!rightPanelCollapsed && (
+              <div className="flex-1 flex flex-col overflow-hidden">
+                {/* Tabs for Chat and Annotations */}
+                <div className="flex border-b border-slate-200">
+                  <button
+                    onClick={() => setRightPanelTab('chat')}
+                    className={`flex-1 py-2 text-sm font-medium ${
+                      rightPanelTab === 'chat'
+                        ? 'text-blue-600 border-b-2 border-blue-600'
+                        : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    AI Chat
+                  </button>
+                  <button
+                    onClick={() => setRightPanelTab('annotations')}
+                    className={`flex-1 py-2 text-sm font-medium ${
+                      rightPanelTab === 'annotations'
+                        ? 'text-blue-600 border-b-2 border-blue-600'
+                        : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    Annotations
+                  </button>
+                </div>
+                
+                {/* Content based on selected tab */}
+                <div className="flex-1 overflow-y-auto">
+                  {rightPanelTab === 'chat' && (
+                    <div className="flex flex-col h-full">
+                      {/* Chat Results Area */}
+                      <div className="flex-1 p-3 overflow-y-auto">
+                        <Results 
+                          query={query}
+                          answer={answer}
+                          error={queryError}
+                          isLoading={isQueryLoading}
+                          metadata={queryMetadata}
+                        />
+                      </div>
+                      
+                      {/* Query Input Area */}
+                      <div className="p-3 border-t border-slate-200">
+                        <QueryInput 
+                          onSubmit={handleQuerySubmit}
+                          isLoading={isQueryLoading}
+                          isDisabled={!fileData || !isServerRunning}
+                        />
+                        
+                        {/* Suggested Queries */}
+                        {fileData && (
+                          <div className="mt-2">
+                            <SuggestedQueries
+                              fileData={fileData}
+                              context={{
+                                selectedSignals,
+                                primaryCursor: primaryCursor.visible ? primaryCursor : undefined,
+                                diffCursor: diffCursor.visible ? diffCursor : undefined,
+                                timeRange: plotData?.layout?.xaxis?.range as [number, number] | undefined
+                              }}
+                              onSelectQuery={handleQuerySubmit}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {rightPanelTab === 'annotations' && (
+                    <div className="p-3">
+                      <Annotations 
+                        annotations={annotations}
+                        onAddAnnotation={handleAddAnnotation}
+                        onDeleteAnnotation={handleDeleteAnnotation}
+                        isConnected={isConnected}
+                      />
+                    </div>
+                  )}
+                </div>
               </div>
-              
-              {/* Annotations */}
-              <div className="bg-white rounded-md border border-slate-200 p-4 flex-1">
-                <Annotations 
-                  annotations={annotations}
-                  onAddAnnotation={handleAddAnnotation}
-                  onDeleteAnnotation={handleDeleteAnnotation}
-                  isConnected={isConnected}
-                />
-              </div>
-            </div>
+            )}
           </div>
         </div>
       </main>

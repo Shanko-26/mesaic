@@ -21,7 +21,9 @@ class QueryProcessor:
             'avg': ['average', 'mean', 'typical'],
             'correlation': ['correlation', 'relationship', 'connection', 'related'],
             'anomaly': ['anomaly', 'anomalies', 'unusual', 'abnormal', 'outlier'],
-            'summary': ['summary', 'overview', 'describe']
+            'summary': ['summary', 'overview', 'describe'],
+            'cursor': ['cursor', 'position', 'marker', 'point'],
+            'compare': ['compare', 'comparison', 'difference', 'diff', 'delta', 'change']
         }
         
         # Signal name mappings (common variations)
@@ -39,20 +41,33 @@ class QueryProcessor:
         # Time regex pattern
         self.time_regex = re.compile(r'at\s+(\d+)(\.\d+)?(?:\s*)(ms|s|seconds|milliseconds)?', re.IGNORECASE)
     
-    def process_query(self, query: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    def process_query(self, query: str, data: Dict[str, Any], context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Process a natural language query about the data.
         
         Args:
             query (str): The natural language query
             data (Dict[str, Any]): The measurement data
+            context (Optional[Dict[str, Any]]): Context about the current visualization state
             
         Returns:
             Dict[str, Any]: The query result
         """
         query = query.lower()
         
-        # Check for time-specific queries first
+        # Log the context for debugging
+        if context:
+            print(f"Processing query with context: {json.dumps(context, default=str)}")
+        
+        # Check for cursor-specific queries if context is available
+        if context and self._is_cursor_query(query):
+            return self._process_cursor_query(query, data, context)
+        
+        # Check for comparison queries if both cursors are available
+        if context and self._is_comparison_query(query) and context.get('primaryCursor') and context.get('diffCursor'):
+            return self._process_comparison_query(query, data, context)
+        
+        # Check for time-specific queries
         time_match = self.time_regex.search(query)
         if time_match:
             return self._process_time_query(query, data, time_match)
@@ -61,7 +76,12 @@ class QueryProcessor:
         query_type = self._determine_query_type(query)
         
         # Extract relevant signals
-        signals = self._extract_signals(query, data)
+        # If context has selected signals, prioritize those
+        if context and context.get('selectedSignals'):
+            signals = context['selectedSignals']
+            print(f"Using signals from context: {signals}")
+        else:
+            signals = self._extract_signals(query, data)
         
         # Process based on query type
         if query_type == 'max':
@@ -84,6 +104,168 @@ class QueryProcessor:
                     'processingTime': 0.3
                 }
             }
+    
+    def _is_cursor_query(self, query: str) -> bool:
+        """Check if the query is about cursor position."""
+        cursor_keywords = self.keywords['cursor']
+        return any(keyword in query for keyword in cursor_keywords)
+    
+    def _is_comparison_query(self, query: str) -> bool:
+        """Check if the query is about comparing two points."""
+        compare_keywords = self.keywords['compare']
+        return any(keyword in query for keyword in compare_keywords)
+    
+    def _process_cursor_query(self, query: str, data: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+        """Process a query about the current cursor position."""
+        # Determine which cursor to use
+        primary_cursor = context.get('primaryCursor')
+        diff_cursor = context.get('diffCursor')
+        
+        if not primary_cursor and not diff_cursor:
+            return {
+                'answer': "No cursor is currently active. Please place a cursor on the plot first.",
+                'metadata': {
+                    'confidence': 0.9,
+                    'processingTime': 0.1
+                }
+            }
+        
+        # Default to primary cursor if both are available
+        cursor = primary_cursor if primary_cursor else diff_cursor
+        cursor_type = "primary" if primary_cursor else "diff"
+        
+        # Get the cursor position
+        cursor_x = cursor.get('x', 0)
+        
+        # Find the closest time index
+        time_array = data.get('data', {}).get('time', [])
+        if not time_array:
+            return {
+                'answer': "Could not find time data to analyze cursor position.",
+                'metadata': {
+                    'confidence': 0.5,
+                    'processingTime': 0.2
+                }
+            }
+        
+        closest_idx = self._find_closest_time_index(time_array, cursor_x)
+        
+        # Get values at cursor position for all selected signals
+        selected_signals = context.get('selectedSignals', [])
+        if not selected_signals:
+            selected_signals = [s for s in data.get('signals', []) if s != 'time']
+        
+        values = {}
+        for signal in selected_signals:
+            signal_data = data.get('data', {}).get(signal, [])
+            if signal_data and len(signal_data) > closest_idx:
+                values[signal] = signal_data[closest_idx]
+        
+        # Format the answer
+        answer = f"At the {cursor_type} cursor position (time = {cursor_x:.3f} seconds):\n\n"
+        for signal, value in values.items():
+            unit = self._get_unit(signal, data)
+            answer += f"- {signal}: {value:.3f} {unit}\n"
+        
+        return {
+            'answer': answer,
+            'metadata': {
+                'confidence': 0.9,
+                'processingTime': 0.3,
+                'cursorPosition': cursor_x,
+                'cursorType': cursor_type,
+                'values': values
+            }
+        }
+    
+    def _process_comparison_query(self, query: str, data: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+        """Process a query comparing values between primary and diff cursors."""
+        primary_cursor = context.get('primaryCursor')
+        diff_cursor = context.get('diffCursor')
+        
+        if not primary_cursor or not diff_cursor:
+            return {
+                'answer': "Both primary and diff cursors need to be active for comparison.",
+                'metadata': {
+                    'confidence': 0.9,
+                    'processingTime': 0.1
+                }
+            }
+        
+        # Get cursor positions
+        primary_x = primary_cursor.get('x', 0)
+        diff_x = diff_cursor.get('x', 0)
+        
+        # Find the closest time indices
+        time_array = data.get('data', {}).get('time', [])
+        if not time_array:
+            return {
+                'answer': "Could not find time data to analyze cursor positions.",
+                'metadata': {
+                    'confidence': 0.5,
+                    'processingTime': 0.2
+                }
+            }
+        
+        primary_idx = self._find_closest_time_index(time_array, primary_x)
+        diff_idx = self._find_closest_time_index(time_array, diff_x)
+        
+        # Get values at cursor positions for all selected signals
+        selected_signals = context.get('selectedSignals', [])
+        if not selected_signals:
+            selected_signals = [s for s in data.get('signals', []) if s != 'time']
+        
+        # Calculate differences
+        differences = {}
+        primary_values = {}
+        diff_values = {}
+        
+        for signal in selected_signals:
+            signal_data = data.get('data', {}).get(signal, [])
+            if signal_data and len(signal_data) > max(primary_idx, diff_idx):
+                primary_value = signal_data[primary_idx]
+                diff_value = signal_data[diff_idx]
+                
+                primary_values[signal] = primary_value
+                diff_values[signal] = diff_value
+                differences[signal] = diff_value - primary_value
+        
+        # Calculate time difference
+        time_diff = diff_x - primary_x
+        
+        # Format the answer
+        answer = f"Comparison between primary cursor ({primary_x:.3f}s) and diff cursor ({diff_x:.3f}s):\n\n"
+        answer += f"Time difference: {time_diff:.3f} seconds\n\n"
+        
+        for signal in selected_signals:
+            if signal in differences:
+                unit = self._get_unit(signal, data)
+                primary_val = primary_values[signal]
+                diff_val = diff_values[signal]
+                diff = differences[signal]
+                
+                # Calculate rate of change
+                rate = diff / time_diff if time_diff != 0 else 0
+                
+                answer += f"- {signal}:\n"
+                answer += f"  Primary: {primary_val:.3f} {unit}\n"
+                answer += f"  Diff: {diff_val:.3f} {unit}\n"
+                answer += f"  Change: {diff:.3f} {unit} ({diff/primary_val*100:.1f}% change)\n"
+                answer += f"  Rate: {rate:.3f} {unit}/s\n\n"
+        
+        return {
+            'answer': answer,
+            'metadata': {
+                'confidence': 0.9,
+                'processingTime': 0.5,
+                'primaryPosition': primary_x,
+                'diffPosition': diff_x,
+                'timeDifference': time_diff,
+                'differences': differences,
+                'primaryValues': primary_values,
+                'diffValues': diff_values
+            }
+        }
     
     def _process_time_query(self, query: str, data: Dict[str, Any], time_match) -> Dict[str, Any]:
         """Process a query about a specific time point."""

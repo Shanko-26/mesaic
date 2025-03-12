@@ -10,12 +10,14 @@ import socketserver
 import urllib.parse
 from data.loader import load_mat_file, load_mf4_file
 from ai.query_processor import QueryProcessor
+from ai.openai_integration import OpenAIIntegration
 
 # Default port for the server
 PORT = 5000
 
-# Initialize the query processor
+# Initialize the query processors
 query_processor = QueryProcessor()
+openai_integration = OpenAIIntegration()
 
 class DataProcessingHandler(BaseHTTPRequestHandler):
     """
@@ -78,7 +80,8 @@ class DataProcessingHandler(BaseHTTPRequestHandler):
         self._set_headers()
         response = {
             'status': 'ok',
-            'message': 'Server is running'
+            'message': 'Server is running',
+            'openai_available': openai_integration.is_available()
         }
         self.wfile.write(json.dumps(response).encode())
     
@@ -117,9 +120,15 @@ class DataProcessingHandler(BaseHTTPRequestHandler):
         try:
             query = request.get('query')
             file_path = request.get('filePath')
+            context = request.get('context')
+            use_openai = request.get('use_openai', True)  # Default to using OpenAI if available
             
             if not query:
                 raise ValueError("No query provided")
+            
+            # Log the context if available
+            if context:
+                print(f"Received context with query: {json.dumps(context, default=str)}")
             
             # Get the file data
             # In a real implementation, we would load the file if it's not already loaded
@@ -153,13 +162,20 @@ class DataProcessingHandler(BaseHTTPRequestHandler):
                     }
                 }
             
-            # Process the query
-            result = query_processor.process_query(query, file_data)
+            # Process the query with context if available
+            # Try to use OpenAI if available and requested
+            if use_openai and openai_integration.is_available():
+                print(f"Processing query with OpenAI: {query}")
+                result = openai_integration.process_query(query, file_data, context)
+            else:
+                print(f"Processing query with built-in processor: {query}")
+                result = query_processor.process_query(query, file_data, context)
             
             self._set_headers()
             response = {
                 'success': True,
-                'data': result
+                'data': result,
+                'used_openai': use_openai and openai_integration.is_available()
             }
             self.wfile.write(json.dumps(response).encode())
             
@@ -196,6 +212,7 @@ def run_server(port=PORT):
     server_address = ('', port)
     httpd = HTTPServer(server_address, DataProcessingHandler)
     print(f"Starting server on port {port}...")
+    print(f"OpenAI integration {'available' if openai_integration.is_available() else 'not available'}")
     httpd.serve_forever()
 
 if __name__ == "__main__":
