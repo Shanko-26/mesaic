@@ -12,6 +12,33 @@ export interface PlotConfig {
   colorScale?: string;
   lineWidth?: number;
   markerSize?: number;
+  plotType?: 'scatter' | 'line' | 'bar' | 'heatmap' | '3d' | 'contour';
+  theme?: 'light' | 'dark' | 'custom';
+  annotations?: PlotAnnotation[];
+  gridLines?: boolean;
+  rangeSelectorEnabled?: boolean;
+  interactiveTooltips?: boolean;
+}
+
+export interface PlotAnnotation {
+  text: string;
+  x: number;
+  y?: number;
+  xref?: 'x' | 'paper';
+  yref?: 'y' | 'paper';
+  showarrow?: boolean;
+  arrowhead?: number;
+  arrowcolor?: string;
+  arrowsize?: number;
+  bgcolor?: string;
+  bordercolor?: string;
+  borderwidth?: number;
+  borderpad?: number;
+  font?: {
+    family?: string;
+    size?: number;
+    color?: string;
+  };
 }
 
 export interface CursorData {
@@ -1296,4 +1323,506 @@ function adjustColorShade(color: string, index: number): string {
   
   // Convert back to hex
   return `#${newR.toString(16).padStart(2, '0')}${newG.toString(16).padStart(2, '0')}${newB.toString(16).padStart(2, '0')}`;
+}
+
+/**
+ * Convert the plot to a 3D visualization
+ * @param {string} containerId - ID of the plot container
+ * @param {FileData} fileData - The file data to visualize
+ * @param {string[]} selectedSignals - The signals to include in the visualization
+ * @returns {Promise<any>} The updated plot
+ */
+export async function convertTo3D(
+  containerId: string,
+  fileData: FileData,
+  selectedSignals: string[] = []
+): Promise<any> {
+  if (selectedSignals.length < 2) {
+    throw new Error('At least 2 signals are required for 3D visualization');
+  }
+
+  const container = document.getElementById(containerId);
+  if (!container) {
+    throw new Error(`Container with ID ${containerId} not found`);
+  }
+
+  // Get time axis
+  let timeAxis: number[] = [];
+  if (fileData.data.time && Array.isArray(fileData.data.time)) {
+    timeAxis = fileData.data.time;
+  } else {
+    const maxLength = Math.max(...selectedSignals.map(s => fileData.data[s]?.length || 0));
+    timeAxis = Array.from({ length: maxLength }, (_, i) => i);
+  }
+
+  // Create 3D data
+  const traces = [];
+  
+  // If we have exactly 2 signals, create a 3D line plot (time, signal1, signal2)
+  if (selectedSignals.length === 2) {
+    traces.push({
+      type: 'scatter3d',
+      mode: 'lines',
+      x: timeAxis,
+      y: fileData.data[selectedSignals[0]],
+      z: fileData.data[selectedSignals[1]],
+      line: {
+        width: 4,
+        color: 'rgba(100, 100, 240, 0.8)'
+      },
+      name: `${selectedSignals[0]} vs ${selectedSignals[1]}`
+    });
+  } 
+  // If we have 3 or more signals, use the first 3 for a 3D plot
+  else if (selectedSignals.length >= 3) {
+    traces.push({
+      type: 'scatter3d',
+      mode: 'lines',
+      x: fileData.data[selectedSignals[0]],
+      y: fileData.data[selectedSignals[1]],
+      z: fileData.data[selectedSignals[2]],
+      line: {
+        width: 4,
+        color: 'rgba(100, 100, 240, 0.8)'
+      },
+      name: `${selectedSignals[0]} vs ${selectedSignals[1]} vs ${selectedSignals[2]}`
+    });
+  }
+
+  const layout = {
+    title: '3D Signal Visualization',
+    scene: {
+      xaxis: { title: selectedSignals.length === 2 ? 'Time' : selectedSignals[0] },
+      yaxis: { title: selectedSignals.length === 2 ? selectedSignals[0] : selectedSignals[1] },
+      zaxis: { title: selectedSignals.length === 2 ? selectedSignals[1] : selectedSignals[2] },
+      camera: {
+        eye: { x: 1.5, y: 1.5, z: 1.5 }
+      }
+    },
+    margin: { l: 0, r: 0, b: 0, t: 50 },
+    autosize: true
+  };
+
+  const config = {
+    responsive: true,
+    displayModeBar: true,
+    modeBarButtonsToAdd: ['hoverClosest3d', 'orbitRotation'],
+    displaylogo: false
+  };
+
+  try {
+    return await Plotly.newPlot(container, traces, layout, config);
+  } catch (error) {
+    console.error('Error creating 3D plot:', error);
+    throw error;
+  }
+}
+
+/**
+ * Create a heatmap visualization from the data
+ * @param {string} containerId - ID of the plot container
+ * @param {FileData} fileData - The file data to visualize
+ * @param {string[]} selectedSignals - The signals to include in the visualization
+ * @param {string} colorScale - The color scale to use for the heatmap
+ * @returns {Promise<any>} The created heatmap plot
+ */
+export async function createHeatmap(
+  containerId: string,
+  fileData: FileData,
+  selectedSignals: string[] = [],
+  colorScale: string = 'Viridis'
+): Promise<any> {
+  const container = document.getElementById(containerId);
+  if (!container) {
+    throw new Error(`Container with ID ${containerId} not found`);
+  }
+
+  // Get time axis
+  let timeAxis: number[] = [];
+  if (fileData.data.time && Array.isArray(fileData.data.time)) {
+    timeAxis = fileData.data.time;
+  } else {
+    const maxLength = Math.max(...selectedSignals.map(s => fileData.data[s]?.length || 0));
+    timeAxis = Array.from({ length: maxLength }, (_, i) => i);
+  }
+
+  // Create a matrix for the heatmap
+  // Each row is a signal, each column is a time point
+  const zValues: number[][] = [];
+  
+  for (const signal of selectedSignals) {
+    if (fileData.data[signal] && Array.isArray(fileData.data[signal])) {
+      zValues.push(fileData.data[signal]);
+    }
+  }
+
+  const trace = {
+    type: 'heatmap',
+    z: zValues,
+    x: timeAxis,
+    y: selectedSignals,
+    colorscale: colorScale,
+    hoverongaps: false,
+    showscale: true,
+    colorbar: {
+      title: 'Value',
+      thickness: 20,
+      thicknessmode: 'pixels',
+      len: 0.9,
+      lenmode: 'fraction',
+      outlinewidth: 1
+    }
+  };
+
+  const layout = {
+    title: 'Signal Heatmap',
+    xaxis: {
+      title: 'Time',
+      autorange: true
+    },
+    yaxis: {
+      title: 'Signals',
+      autorange: true
+    },
+    margin: { l: 100, r: 50, b: 50, t: 50, pad: 4 },
+    autosize: true
+  };
+
+  const config = {
+    responsive: true,
+    displayModeBar: true,
+    displaylogo: false,
+    scrollZoom: true
+  };
+
+  try {
+    return await Plotly.newPlot(container, [trace], layout, config);
+  } catch (error) {
+    console.error('Error creating heatmap:', error);
+    throw error;
+  }
+}
+
+/**
+ * Add interactive range selector to the plot
+ * @param {string} containerId - ID of the plot container
+ * @returns {Promise<any>} The updated plot
+ */
+export async function addRangeSelector(
+  containerId: string
+): Promise<any> {
+  const container = document.getElementById(containerId);
+  if (!container) {
+    throw new Error(`Container with ID ${containerId} not found`);
+  }
+
+  try {
+    // Get the current layout
+    // @ts-ignore - Accessing Plotly's internal properties
+    const currentLayout = container._fullLayout || {};
+    
+    // Add range selector to x-axis
+    const updatedLayout = {
+      ...currentLayout,
+      xaxis: {
+        ...currentLayout.xaxis,
+        rangeslider: {
+          visible: true,
+          thickness: 0.1
+        },
+        rangeselector: {
+          buttons: [
+            {
+              count: 1,
+              label: '1s',
+              step: 'second',
+              stepmode: 'backward'
+            },
+            {
+              count: 10,
+              label: '10s',
+              step: 'second',
+              stepmode: 'backward'
+            },
+            {
+              count: 30,
+              label: '30s',
+              step: 'second',
+              stepmode: 'backward'
+            },
+            {
+              step: 'all',
+              label: 'All'
+            }
+          ],
+          x: 0,
+          y: 1.1,
+          font: { size: 10 }
+        }
+      }
+    };
+
+    return await Plotly.relayout(container, updatedLayout);
+  } catch (error) {
+    console.error('Error adding range selector:', error);
+    throw error;
+  }
+}
+
+/**
+ * Add annotations to the plot
+ * @param {string} containerId - ID of the plot container
+ * @param {PlotAnnotation[]} annotations - The annotations to add
+ * @returns {Promise<any>} The updated plot
+ */
+export async function addAnnotations(
+  containerId: string,
+  annotations: PlotAnnotation[]
+): Promise<any> {
+  const container = document.getElementById(containerId);
+  if (!container) {
+    throw new Error(`Container with ID ${containerId} not found`);
+  }
+
+  try {
+    // Get the current layout
+    // @ts-ignore - Accessing Plotly's internal properties
+    const currentLayout = container._fullLayout || {};
+    
+    // Add annotations to the layout
+    const updatedLayout = {
+      ...currentLayout,
+      annotations: annotations.map(annotation => ({
+        text: annotation.text,
+        x: annotation.x,
+        y: annotation.y || 0,
+        xref: annotation.xref || 'x',
+        yref: annotation.yref || 'paper',
+        showarrow: annotation.showarrow !== undefined ? annotation.showarrow : true,
+        arrowhead: annotation.arrowhead || 2,
+        arrowcolor: annotation.arrowcolor || 'rgba(0, 0, 0, 0.6)',
+        arrowsize: annotation.arrowsize || 1,
+        bgcolor: annotation.bgcolor || 'rgba(255, 255, 255, 0.8)',
+        bordercolor: annotation.bordercolor || 'rgba(0, 0, 0, 0.2)',
+        borderwidth: annotation.borderwidth || 1,
+        borderpad: annotation.borderpad || 4,
+        font: annotation.font || {
+          family: 'Arial, sans-serif',
+          size: 12,
+          color: 'rgba(0, 0, 0, 0.8)'
+        }
+      }))
+    };
+
+    return await Plotly.relayout(container, updatedLayout);
+  } catch (error) {
+    console.error('Error adding annotations:', error);
+    throw error;
+  }
+}
+
+/**
+ * Apply a theme to the plot
+ * @param {string} containerId - ID of the plot container
+ * @param {'light' | 'dark' | 'custom'} theme - The theme to apply
+ * @param {Record<string, any>} customTheme - Custom theme settings (only used if theme is 'custom')
+ * @returns {Promise<any>} The updated plot
+ */
+export async function applyTheme(
+  containerId: string,
+  theme: 'light' | 'dark' | 'custom',
+  customTheme?: Record<string, any>
+): Promise<any> {
+  const container = document.getElementById(containerId);
+  if (!container) {
+    throw new Error(`Container with ID ${containerId} not found`);
+  }
+
+  try {
+    // Get the current layout
+    // @ts-ignore - Accessing Plotly's internal properties
+    const currentLayout = container._fullLayout || {};
+    
+    let themeSettings: Record<string, any> = {};
+    
+    if (theme === 'light') {
+      themeSettings = {
+        paper_bgcolor: 'white',
+        plot_bgcolor: 'white',
+        font: {
+          family: 'Arial, sans-serif',
+          color: 'rgb(50, 50, 50)'
+        },
+        xaxis: {
+          ...currentLayout.xaxis,
+          gridcolor: 'rgb(230, 230, 230)',
+          linecolor: 'rgb(200, 200, 200)'
+        },
+        yaxis: {
+          ...currentLayout.yaxis,
+          gridcolor: 'rgb(230, 230, 230)',
+          linecolor: 'rgb(200, 200, 200)'
+        }
+      };
+    } else if (theme === 'dark') {
+      themeSettings = {
+        paper_bgcolor: 'rgb(40, 40, 40)',
+        plot_bgcolor: 'rgb(40, 40, 40)',
+        font: {
+          family: 'Arial, sans-serif',
+          color: 'rgb(220, 220, 220)'
+        },
+        xaxis: {
+          ...currentLayout.xaxis,
+          gridcolor: 'rgb(80, 80, 80)',
+          linecolor: 'rgb(100, 100, 100)',
+          tickfont: { color: 'rgb(200, 200, 200)' }
+        },
+        yaxis: {
+          ...currentLayout.yaxis,
+          gridcolor: 'rgb(80, 80, 80)',
+          linecolor: 'rgb(100, 100, 100)',
+          tickfont: { color: 'rgb(200, 200, 200)' }
+        }
+      };
+    } else if (theme === 'custom' && customTheme) {
+      themeSettings = customTheme;
+    }
+
+    const updatedLayout = {
+      ...currentLayout,
+      ...themeSettings
+    };
+
+    return await Plotly.relayout(container, updatedLayout);
+  } catch (error) {
+    console.error('Error applying theme:', error);
+    throw error;
+  }
+}
+
+/**
+ * Enable interactive tooltips with enhanced information
+ * @param {string} containerId - ID of the plot container
+ * @param {FileData} fileData - The file data
+ * @returns {Promise<any>} The updated plot
+ */
+export async function enableEnhancedTooltips(
+  containerId: string,
+  fileData: FileData
+): Promise<any> {
+  const container = document.getElementById(containerId);
+  if (!container) {
+    throw new Error(`Container with ID ${containerId} not found`);
+  }
+
+  try {
+    // Get the current data
+    // @ts-ignore - Accessing Plotly's internal properties
+    const currentData = container.data || [];
+    
+    // Update each trace with enhanced hover templates
+    const updatedData = currentData.map((trace: any, index: number) => {
+      const signalName = trace.name || `Signal ${index + 1}`;
+      
+      return {
+        ...trace,
+        hovertemplate: `<b>${signalName}</b><br>` +
+          'Time: %{x:.4f}s<br>' +
+          'Value: %{y:.4f}<br>' +
+          '<extra></extra>'
+      };
+    });
+
+    return await Plotly.update(container, updatedData, {});
+  } catch (error) {
+    console.error('Error enabling enhanced tooltips:', error);
+    throw error;
+  }
+}
+
+/**
+ * Create a contour plot from the data
+ * @param {string} containerId - ID of the plot container
+ * @param {FileData} fileData - The file data to visualize
+ * @param {string[]} selectedSignals - The signals to include in the visualization
+ * @param {string} colorScale - The color scale to use for the contour plot
+ * @returns {Promise<any>} The created contour plot
+ */
+export async function createContourPlot(
+  containerId: string,
+  fileData: FileData,
+  selectedSignals: string[] = [],
+  colorScale: string = 'Viridis'
+): Promise<any> {
+  if (selectedSignals.length < 1) {
+    throw new Error('At least 1 signal is required for contour visualization');
+  }
+
+  const container = document.getElementById(containerId);
+  if (!container) {
+    throw new Error(`Container with ID ${containerId} not found`);
+  }
+
+  // Get time axis
+  let timeAxis: number[] = [];
+  if (fileData.data.time && Array.isArray(fileData.data.time)) {
+    timeAxis = fileData.data.time;
+  } else {
+    const maxLength = Math.max(...selectedSignals.map(s => fileData.data[s]?.length || 0));
+    timeAxis = Array.from({ length: maxLength }, (_, i) => i);
+  }
+
+  // Create traces for each signal
+  const traces = selectedSignals.map(signal => {
+    if (!fileData.data[signal] || !Array.isArray(fileData.data[signal])) {
+      console.warn(`Signal ${signal} is not an array or is missing`);
+      return null;
+    }
+
+    return {
+      type: 'contour',
+      z: [fileData.data[signal]], // Wrap in array for contour plot
+      x: timeAxis.slice(0, fileData.data[signal].length),
+      colorscale: colorScale,
+      contours: {
+        coloring: 'heatmap',
+        showlabels: true,
+        labelfont: {
+          family: 'Arial, sans-serif',
+          size: 10,
+          color: 'white'
+        }
+      },
+      name: signal
+    };
+  }).filter(trace => trace !== null);
+
+  const layout = {
+    title: 'Signal Contour Visualization',
+    xaxis: {
+      title: 'Time',
+      autorange: true
+    },
+    yaxis: {
+      title: 'Value',
+      autorange: true
+    },
+    margin: { l: 50, r: 50, b: 50, t: 50, pad: 4 },
+    autosize: true
+  };
+
+  const config = {
+    responsive: true,
+    displayModeBar: true,
+    displaylogo: false,
+    scrollZoom: true
+  };
+
+  try {
+    return await Plotly.newPlot(container, traces, layout, config);
+  } catch (error) {
+    console.error('Error creating contour plot:', error);
+    throw error;
+  }
 } 

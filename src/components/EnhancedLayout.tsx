@@ -25,11 +25,13 @@ import {
   disableBrushSelection,
   configureMultiYAxes,
   toggleLogarithmicScale,
-  applySmoothingToSignal
+  applySmoothingToSignal,
+  PlotData
 } from '../services/visualization';
 import {
   generateChatResponse
 } from '../services/ai';
+import { PlotArea } from './Visualization/PlotArea';
 
 /**
  * EnhancedLayout - The main UI layout for MesAIc
@@ -124,6 +126,9 @@ export function EnhancedLayout() {
     method: 'movingAverage'
   });
   
+  // Add state for plot data
+  const [plotData, setPlotData] = useState<PlotData | undefined>(undefined);
+  
   // Load initial data
   useEffect(() => {
     setCurrentFile(getCurrentFile());
@@ -163,39 +168,21 @@ export function EnhancedLayout() {
     }
   }, [fileData]);
   
-  // Create plot when file data and selected signals change
+  // Update the plot data when file data or selected signals change
   useEffect(() => {
-    if (fileData && selectedSignals.length > 0 && plotContainerRef.current) {
-      try {
-        console.log('Creating plot with selected signals:', selectedSignals);
-        const plotData = generatePlotData(fileData, selectedSignals, {
-          title: currentFile?.name || 'Signal Visualization',
-          showLegend: true,
-          lineWidth: 2
-        }, primaryCursor);
-        
-        // Clear the container first to avoid duplicate plots
-        if (plotContainerRef.current) {
-          while (plotContainerRef.current.firstChild) {
-            plotContainerRef.current.removeChild(plotContainerRef.current.firstChild);
-          }
-        }
-        
-        createPlot('plot-container', plotData)
-          .then(() => {
-            console.log('Plot created successfully');
-          })
-          .catch((err: Error) => {
-            console.error('Error creating plot:', err);
-            setError(`Failed to create plot: ${err.message}`);
-          });
-      } catch (err: unknown) {
-        console.error('Error generating plot data:', err);
-        const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-        setError(`Failed to generate plot data: ${errorMessage}`);
-      }
+    if (fileData && selectedSignals.length > 0) {
+      const newPlotData = generatePlotData(fileData, selectedSignals, {
+        title: currentFile?.name || 'Signal Visualization',
+        xAxisLabel: 'Time',
+        yAxisLabel: 'Value',
+        showLegend: true
+      }, primaryCursor, diffCursor);
+      
+      setPlotData(newPlotData);
+    } else {
+      setPlotData(undefined);
     }
-  }, [fileData, selectedSignals, primaryCursor, currentFile]);
+  }, [fileData, selectedSignals, currentFile, primaryCursor, diffCursor]);
   
   // Handle file selection
   const handleFileSelect = async (filePath: string) => {
@@ -316,82 +303,20 @@ export function EnhancedLayout() {
     resetZoomPlot('plot-container');
   };
   
-  // Update the plot click handler to support both primary and diff cursors
-  const handlePlotClick = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (!plotContainerRef.current || !fileData || !fileData.data.time) {
-      console.log('Plot click ignored - missing prerequisites');
-      return;
-    }
-    
-    try {
-      console.log('Plot clicked, calculating cursor position');
-      // Get the plot container dimensions
-      const rect = plotContainerRef.current.getBoundingClientRect();
-      
-      // Calculate the relative position within the plot (0-1)
-      const relativeX = (event.clientX - rect.left) / rect.width;
-      console.log('Relative X position:', relativeX);
-      
-      // Get the time axis
-      const timeAxis = fileData.data.time;
-      if (!Array.isArray(timeAxis) || timeAxis.length === 0) {
-        console.warn('Time axis is not available or empty');
-        return;
-      }
-      
-      // Scale the relative position to the time range
-      const timeMin = Math.min(...timeAxis);
-      const timeMax = Math.max(...timeAxis);
-      const timeValue = timeMin + relativeX * (timeMax - timeMin);
-      console.log('Calculated time value:', timeValue);
-      
-      // Find the closest time point in the data
-      let closestIndex = 0;
-      let closestDistance = Math.abs(timeAxis[0] - timeValue);
-      
-      for (let i = 1; i < timeAxis.length; i++) {
-        const distance = Math.abs(timeAxis[i] - timeValue);
-        if (distance < closestDistance) {
-          closestDistance = distance;
-          closestIndex = i;
-        }
-      }
-      
-      const exactTimeValue = timeAxis[closestIndex];
-      console.log('Closest time value in data:', exactTimeValue, 'at index', closestIndex);
-      
-      // Update the appropriate cursor based on mode or shift key
-      if (cursorMode === 'diff' || event.shiftKey) {
-        // Update diff cursor
-        const newCursor = {
-          ...diffCursor,
-          x: exactTimeValue,
-          visible: true
-        };
-        
-        console.log('Setting diff cursor:', newCursor);
-        setDiffCursor(newCursor);
-        
-        // If shift key is not held, switch back to primary mode
-        if (!event.shiftKey) {
-          setCursorMode('primary');
-        }
-      } else {
-        // Update primary cursor
-        const newCursor = {
-          ...primaryCursor,
-          x: exactTimeValue,
-          visible: true
-        };
-        
-        console.log('Setting primary cursor:', newCursor);
-        setPrimaryCursor(newCursor);
-      }
-      
-      // Update the plot with both cursors
-      updateCursors('plot-container', primaryCursor, diffCursor, timeAxis);
-    } catch (err) {
-      console.error('Error handling plot click:', err);
+  // Handle cursor movement from the plot
+  const handleCursorMove = (x: number, isPrimary: boolean) => {
+    if (isPrimary) {
+      setPrimaryCursor({
+        ...primaryCursor,
+        x,
+        visible: true
+      });
+    } else {
+      setDiffCursor({
+        ...diffCursor,
+        x,
+        visible: true
+      });
     }
   };
   
@@ -1044,29 +969,16 @@ export function EnhancedLayout() {
           {/* Plot area */}
           <div 
             className="flex-1 overflow-hidden p-4 bg-background"
-            onClick={handlePlotClick}
           >
-            <div 
-              id="plot-container"
-              ref={plotContainerRef}
-              className="h-full border border-dashed border-border rounded-md flex items-center justify-center"
-            >
-              {isLoading ? (
-                <div className="text-center">
-                  <p className="text-muted-foreground">Loading data...</p>
-                </div>
-              ) : !fileData ? (
-                <div className="text-center">
-                  <p className="text-muted-foreground">Plot Visualization Area</p>
-                  <p className="text-xs text-muted-foreground mt-1">Load a file to display data</p>
-                </div>
-              ) : selectedSignals.length === 0 ? (
-                <div className="text-center">
-                  <p className="text-muted-foreground">No signals selected</p>
-                  <p className="text-xs text-muted-foreground mt-1">Select signals from the sidebar</p>
-                </div>
-              ) : null}
-            </div>
+            <PlotArea
+              plotData={plotData}
+              isLoading={isLoading}
+              fileData={fileData || undefined}
+              selectedSignals={selectedSignals}
+              primaryCursor={primaryCursor}
+              diffCursor={diffCursor}
+              onCursorMove={handleCursorMove}
+            />
           </div>
         </div>
         
