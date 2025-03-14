@@ -1,6 +1,34 @@
-# MesAIc - AI-Driven Measurement Analysis
+# MesAIc - AI-Driven Signal Analysis Platform
 
-MesAIc is an application for analyzing measurement data using AI techniques. It consists of a Python backend server, a Node.js collaboration server, and a Next.js frontend.
+MesAIc is an application for analyzing measurement data using AI techniques. It features an enhanced UI with a modern three-panel layout for improved signal visualization and analysis. The application consists of a Python backend server, a Node.js collaboration server, and a React frontend.
+
+## Features
+
+- **Enhanced Three-Panel Layout**:
+  - Collapsible left sidebar for file management and signal selection
+  - Central visualization area with interactive plots
+  - Collapsible right panel for AI chat and data analysis
+  - Bottom bar for annotations and collaboration
+
+- **Data Management**:
+  - Load and visualize measurement data from .mat and .mf4 files
+  - Select and filter signals for analysis
+  - View signal statistics and metadata
+
+- **Interactive Visualization**:
+  - Zoom, pan, and reset plot views
+  - Position cursors for precise data analysis
+  - View signal values at cursor positions
+
+- **AI-Powered Analysis**:
+  - Query the data using natural language
+  - Get instant insights about signal patterns
+  - Compare multiple signals with AI assistance
+
+- **Collaboration and Annotation**:
+  - Add annotations at specific time points
+  - Collaborate with others in real-time
+  - Share findings and insights
 
 ## Quick Start
 
@@ -81,13 +109,6 @@ Once all servers are running:
 - The Node.js collaboration server is available at: http://localhost:3001
 - The Next.js frontend is available at: http://localhost:3000
 
-## Features
-
-- Load and visualize measurement data from .mat and .mf4 files
-- Query the data using natural language
-- Collaborate with others in real-time
-- Add annotations to important findings
-
 ## Requirements
 
 - Python 3.8+
@@ -105,7 +126,6 @@ Once all servers are running:
 
 ## JavaScript Dependencies
 
-- Next.js
 - React
 - Plotly.js
 - Tailwind CSS
@@ -115,6 +135,9 @@ Once all servers are running:
 
 - `electron/`: Electron main process
 - `src/`: React frontend
+  - `components/`: UI components including the EnhancedLayout
+  - `services/`: Data and visualization services
+  - `data/`: Sample data and utilities
 - `python/`: Python services for data processing
 - `server/`: Collaboration server
 

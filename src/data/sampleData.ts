@@ -3,6 +3,8 @@
  * This simulates data that might come from a .mat or .mf4 file
  */
 
+import { FileData } from '../services/file';
+
 export interface SampleDataOptions {
   duration?: number; // Duration in seconds
   sampleRate?: number; // Samples per second
@@ -222,20 +224,78 @@ export function generateSampleData(options: SampleDataOptions = {}) {
 }
 
 /**
- * Get a sample dataset with default options
+ * Sample data for testing when no server is available
  */
-export const sampleData = generateSampleData();
+export const sampleData: FileData = {
+  signals: ['time', 'engineRPM', 'vehicleSpeed', 'engineTemp', 'throttlePosition', 'fuelConsumption', 'batteryVoltage', 'ambientTemp', 'oilPressure'],
+  data: {
+    time: Array.from({ length: 100 }, (_, i) => i * 0.5), // 0 to 49.5 seconds
+    engineRPM: Array.from({ length: 100 }, (_, i) => {
+      // Create a pattern with acceleration and deceleration
+      const base = 800;
+      const amplitude = 3700;
+      return base + amplitude * Math.sin(i * 0.1) * Math.sin(i * 0.02);
+    }),
+    vehicleSpeed: Array.from({ length: 100 }, (_, i) => {
+      // Speed follows RPM with a delay
+      const base = 0;
+      const amplitude = 120;
+      return Math.max(0, base + amplitude * Math.sin((i - 5) * 0.1) * Math.sin((i - 5) * 0.02));
+    }),
+    engineTemp: Array.from({ length: 100 }, (_, i) => {
+      // Temperature gradually increases
+      return 80 + i * 0.2;
+    }),
+    throttlePosition: Array.from({ length: 100 }, (_, i) => {
+      // Throttle position follows a pattern similar to RPM but with sharper changes
+      return Math.max(0, Math.min(100, 50 + 50 * Math.sin(i * 0.15)));
+    }),
+    fuelConsumption: Array.from({ length: 100 }, (_, i) => {
+      // Fuel consumption correlates with RPM and throttle
+      const base = 2;
+      const amplitude = 10;
+      return base + amplitude * Math.abs(Math.sin(i * 0.1));
+    }),
+    batteryVoltage: Array.from({ length: 100 }, (_, i) => {
+      // Battery voltage with small fluctuations
+      return 12.5 + 0.5 * Math.sin(i * 0.3);
+    }),
+    ambientTemp: Array.from({ length: 100 }, (_, i) => {
+      // Ambient temperature with slight variations
+      return 25 + 3 * Math.sin(i * 0.05);
+    }),
+    oilPressure: Array.from({ length: 100 }, (_, i) => {
+      // Oil pressure correlates with RPM
+      const base = 30;
+      const amplitude = 20;
+      return base + amplitude * Math.abs(Math.sin(i * 0.1));
+    })
+  },
+  metadata: {
+    source: 'Sample Data',
+    description: 'Generated sample data for testing',
+    created: new Date().toISOString(),
+    units: {
+      engineRPM: 'RPM',
+      vehicleSpeed: 'km/h',
+      engineTemp: '°C',
+      throttlePosition: '%',
+      fuelConsumption: 'L/100km',
+      batteryVoltage: 'V',
+      ambientTemp: '°C',
+      oilPressure: 'psi'
+    }
+  }
+};
 
 /**
- * Export a function to simulate loading a file
- * @param filePath The file path (not used, just for API compatibility)
- * @returns Promise that resolves to the sample data
+ * Load sample file
+ * @param {string} filePath - Path to the file (ignored, always returns sample data)
+ * @returns {Promise<FileData>} Sample file data
  */
-export function loadSampleFile(filePath: string): Promise<any> {
+export async function loadSampleFile(filePath: string): Promise<FileData> {
   // Simulate network delay
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      resolve(sampleData);
-    }, 1000);
-  });
+  await new Promise(resolve => setTimeout(resolve, 500));
+  
+  return sampleData;
 } 

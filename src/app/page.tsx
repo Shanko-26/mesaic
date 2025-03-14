@@ -1,10 +1,10 @@
 import dynamic from 'next/dynamic';
 
 // Use dynamic import with SSR disabled to avoid hydration issues
-const MainLayout = dynamic(() => import('../components/MainLayout').then(mod => ({ default: mod.MainLayout })), {
+const App = dynamic(() => import('../App').then(mod => ({ default: mod.default })), {
   ssr: false
 });
 
 export default function Home() {
-  return <MainLayout />;
+  return <App />;
 } 
