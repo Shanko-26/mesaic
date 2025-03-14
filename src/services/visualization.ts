@@ -831,4 +831,469 @@ export function debugPlotly(containerId: string): void {
   }
   
   console.log('===== END DEBUG PLOTLY =====');
+}
+
+/**
+ * Position a cursor at a specific time value
+ * @param {string} containerId - ID of the plot container
+ * @param {CursorData} cursor - Cursor data to update
+ * @param {number} timeValue - Time value to position the cursor at
+ * @param {number[]} timeAxis - Time axis data
+ * @returns {CursorData} Updated cursor data
+ */
+export function positionCursorAtTime(
+  containerId: string,
+  cursor: CursorData,
+  timeValue: number,
+  timeAxis: number[]
+): CursorData {
+  // Create a new cursor with the specified time value
+  const newCursor: CursorData = {
+    ...cursor,
+    x: timeValue,
+    visible: true
+  };
+  
+  // Update the plot with the new cursor
+  const container = document.getElementById(containerId);
+  if (container) {
+    try {
+      // Use Plotly to update the cursor shape
+      const shapes = [];
+      
+      if (newCursor.visible) {
+        shapes.push({
+          type: 'line',
+          x0: newCursor.x,
+          y0: 0,
+          x1: newCursor.x,
+          y1: 1,
+          xref: 'x',
+          yref: 'paper',
+          line: {
+            color: newCursor.color,
+            width: 2,
+            dash: 'solid'
+          }
+        });
+      }
+      
+      Plotly.relayout(container, {
+        'shapes': shapes
+      });
+      
+      console.log(`Cursor positioned at time ${timeValue}`);
+    } catch (error) {
+      console.error('Error positioning cursor:', error);
+    }
+  }
+  
+  return newCursor;
+}
+
+/**
+ * Enable brush selection for zooming on a plot
+ * @param {string} containerId - The ID of the container element
+ * @returns {void}
+ */
+export function enableBrushSelection(containerId: string): void {
+  const container = document.getElementById(containerId);
+  if (!container) {
+    console.error(`Container element with ID "${containerId}" not found`);
+    return;
+  }
+
+  try {
+    // Configure the plot for brush selection
+    Plotly.update(container, {}, {
+      dragmode: 'select',
+      selectdirection: 'h', // horizontal selection only
+      hovermode: 'closest'
+    });
+
+    // Add event listener for selection
+    // Use Plotly's event system instead of DOM events
+    const plotlyContainer = container as any;
+    plotlyContainer.on('plotly_selected', (eventData: any) => {
+      if (!eventData || !eventData.range) {
+        return;
+      }
+
+      // Get the selected x-range
+      const xRange = eventData.range.x;
+      if (!xRange || xRange.length !== 2) {
+        return;
+      }
+
+      // Zoom to the selected range
+      Plotly.relayout(container, {
+        'xaxis.range': [xRange[0], xRange[1]],
+        'dragmode': 'select' // Keep selection mode active
+      });
+
+      console.log(`Zoomed to range: ${xRange[0]} to ${xRange[1]}`);
+    });
+
+    console.log('Brush selection enabled');
+  } catch (error) {
+    console.error('Error enabling brush selection:', error);
+  }
+}
+
+/**
+ * Disable brush selection on a plot
+ * @param {string} containerId - The ID of the container element
+ * @returns {void}
+ */
+export function disableBrushSelection(containerId: string): void {
+  const container = document.getElementById(containerId);
+  if (!container) {
+    console.error(`Container element with ID "${containerId}" not found`);
+    return;
+  }
+
+  try {
+    // Reset to default drag mode (pan)
+    Plotly.relayout(container, {
+      dragmode: 'pan'
+    });
+
+    // Remove the selection event listener using Plotly's event system
+    const plotlyContainer = container as any;
+    if (plotlyContainer && typeof plotlyContainer.removeAllListeners === 'function') {
+      plotlyContainer.removeAllListeners('plotly_selected');
+    } else {
+      console.warn('Could not remove event listeners, Plotly container not properly initialized');
+    }
+
+    console.log('Brush selection disabled');
+  } catch (error) {
+    console.error('Error disabling brush selection:', error);
+  }
+}
+
+/**
+ * Configure a plot with multiple Y-axes for different signal groups
+ * @param {string} containerId - The ID of the container element
+ * @param {Record<string, string[]>} signalGroups - Groups of signals and their members
+ * @param {FileData} fileData - The file data containing signal values
+ * @returns {Promise<void>}
+ */
+export async function configureMultiYAxes(
+  containerId: string,
+  signalGroups: Record<string, string[]>,
+  fileData: FileData
+): Promise<void> {
+  const container = document.getElementById(containerId);
+  if (!container) {
+    console.error(`Container element with ID "${containerId}" not found`);
+    return;
+  }
+
+  try {
+    // Get the time axis
+    const timeAxis = fileData.data.time || [];
+    if (!timeAxis.length) {
+      console.error('Time axis not available');
+      return;
+    }
+
+    // Create traces for each signal group with different y-axes
+    const traces: any[] = [];
+    const layout: any = {
+      grid: {
+        rows: 1,
+        columns: 1,
+        pattern: 'independent'
+      },
+      xaxis: {
+        title: 'Time',
+        domain: [0, 0.9] // Leave space for multiple y-axes
+      }
+    };
+
+    // Create a y-axis for each group
+    Object.entries(signalGroups).forEach(([groupName, signals], groupIndex) => {
+      // Skip empty groups
+      if (!signals.length) return;
+
+      // Create a y-axis for this group
+      const yAxisId = groupIndex === 0 ? 'yaxis' : `yaxis${groupIndex + 1}`;
+      
+      // Configure the y-axis
+      layout[yAxisId] = {
+        title: groupName,
+        titlefont: { color: getGroupColor(groupName, groupIndex) },
+        tickfont: { color: getGroupColor(groupName, groupIndex) },
+        side: groupIndex % 2 === 0 ? 'left' : 'right',
+        position: groupIndex === 0 ? 0 : 0.9,
+        anchor: 'free',
+        overlaying: groupIndex > 0 ? 'y' : undefined
+      };
+
+      // Add traces for each signal in this group
+      signals.forEach((signal, signalIndex) => {
+        if (!fileData.data[signal] || !Array.isArray(fileData.data[signal])) {
+          console.warn(`Signal ${signal} is not an array or is missing`);
+          return;
+        }
+
+        const values = fileData.data[signal];
+        const color = getSignalColor(signal, signalIndex, groupName, groupIndex);
+
+        traces.push({
+          x: timeAxis.slice(0, values.length),
+          y: values,
+          type: 'scatter',
+          mode: 'lines',
+          name: signal,
+          line: {
+            width: 2,
+            color: color
+          },
+          yaxis: groupIndex === 0 ? 'y' : `y${groupIndex + 1}`
+        });
+      });
+    });
+
+    // Update the plot with the new configuration
+    await Plotly.react(container, traces, layout);
+    console.log('Multi-Y axes configured');
+  } catch (error) {
+    console.error('Error configuring multi-Y axes:', error);
+  }
+}
+
+/**
+ * Toggle between linear and logarithmic scale for an axis
+ * @param {string} containerId - The ID of the container element
+ * @param {'x' | 'y'} axis - The axis to toggle ('x' or 'y')
+ * @returns {Promise<boolean>} True if the axis is now logarithmic, false if linear
+ */
+export async function toggleLogarithmicScale(
+  containerId: string,
+  axis: 'x' | 'y' = 'y'
+): Promise<boolean> {
+  const container = document.getElementById(containerId);
+  if (!container) {
+    console.error(`Container element with ID "${containerId}" not found`);
+    return false;
+  }
+
+  try {
+    // Get the current axis type
+    const layout = (container as any)._fullLayout;
+    const axisName = axis === 'x' ? 'xaxis' : 'yaxis';
+    const currentType = layout[axisName].type;
+    
+    // Toggle between linear and log
+    const newType = currentType === 'log' ? 'linear' : 'log';
+    
+    // Update the axis type
+    const update: any = {};
+    update[`${axisName}.type`] = newType;
+    
+    await Plotly.relayout(container, update);
+    console.log(`${axis}-axis scale set to ${newType}`);
+    
+    return newType === 'log';
+  } catch (error) {
+    console.error(`Error toggling ${axis}-axis scale:`, error);
+    return false;
+  }
+}
+
+/**
+ * Apply signal smoothing to visualized data
+ * @param {string} containerId - The ID of the container element
+ * @param {string} signalName - The name of the signal to smooth
+ * @param {number} windowSize - The size of the smoothing window
+ * @param {'movingAverage' | 'exponential'} method - The smoothing method
+ * @param {FileData} fileData - The original file data
+ * @returns {Promise<void>}
+ */
+export async function applySmoothingToSignal(
+  containerId: string,
+  signalName: string,
+  windowSize: number,
+  method: 'movingAverage' | 'exponential',
+  fileData: FileData
+): Promise<void> {
+  const container = document.getElementById(containerId);
+  if (!container) {
+    console.error(`Container element with ID "${containerId}" not found`);
+    return;
+  }
+
+  try {
+    // Get the original signal data
+    const signalData = fileData.data[signalName];
+    if (!signalData || !Array.isArray(signalData)) {
+      console.error(`Signal ${signalName} not found or not an array`);
+      return;
+    }
+
+    // Get the time axis
+    const timeAxis = fileData.data.time || Array.from({ length: signalData.length }, (_, i) => i);
+
+    // Apply smoothing
+    let smoothedData: number[];
+    if (method === 'movingAverage') {
+      smoothedData = applyMovingAverage(signalData, windowSize);
+    } else {
+      smoothedData = applyExponentialSmoothing(signalData, 2 / (windowSize + 1));
+    }
+
+    // Find the trace index for this signal
+    const plotData = (container as any).data;
+    const traceIndex = plotData.findIndex((trace: any) => trace.name === signalName);
+
+    if (traceIndex === -1) {
+      console.error(`Trace for signal ${signalName} not found`);
+      return;
+    }
+
+    // Update the trace with smoothed data
+    const update: any = {
+      y: [smoothedData]
+    };
+
+    // Add a suffix to the name to indicate smoothing
+    const smoothingLabel = method === 'movingAverage' ? 'MA' : 'EMA';
+    update.name = [`${signalName} (${smoothingLabel}${windowSize})`];
+
+    // Update the trace
+    await Plotly.restyle(container, update, [traceIndex]);
+    console.log(`Applied ${method} smoothing to ${signalName} with window size ${windowSize}`);
+  } catch (error) {
+    console.error('Error applying smoothing:', error);
+  }
+}
+
+/**
+ * Apply moving average smoothing to a signal
+ * @param {number[]} data - The signal data
+ * @param {number} windowSize - The size of the moving average window
+ * @returns {number[]} The smoothed data
+ */
+function applyMovingAverage(data: number[], windowSize: number): number[] {
+  const result: number[] = [];
+  const halfWindow = Math.floor(windowSize / 2);
+
+  for (let i = 0; i < data.length; i++) {
+    let sum = 0;
+    let count = 0;
+
+    for (let j = Math.max(0, i - halfWindow); j <= Math.min(data.length - 1, i + halfWindow); j++) {
+      sum += data[j];
+      count++;
+    }
+
+    result.push(sum / count);
+  }
+
+  return result;
+}
+
+/**
+ * Apply exponential smoothing to a signal
+ * @param {number[]} data - The signal data
+ * @param {number} alpha - The smoothing factor (0 < alpha < 1)
+ * @returns {number[]} The smoothed data
+ */
+function applyExponentialSmoothing(data: number[], alpha: number): number[] {
+  if (data.length === 0) return [];
+  
+  const result: number[] = [data[0]];
+  
+  for (let i = 1; i < data.length; i++) {
+    result.push(alpha * data[i] + (1 - alpha) * result[i - 1]);
+  }
+  
+  return result;
+}
+
+/**
+ * Get a color for a signal group
+ * @param {string} groupName - The name of the group
+ * @param {number} groupIndex - The index of the group
+ * @returns {string} A color for the group
+ */
+function getGroupColor(groupName: string, groupIndex: number): string {
+  // Define a set of distinct colors for groups
+  const groupColors = [
+    '#1f77b4', // blue
+    '#ff7f0e', // orange
+    '#2ca02c', // green
+    '#d62728', // red
+    '#9467bd', // purple
+    '#8c564b', // brown
+    '#e377c2', // pink
+    '#7f7f7f', // gray
+    '#bcbd22', // olive
+    '#17becf'  // teal
+  ];
+  
+  return groupColors[groupIndex % groupColors.length];
+}
+
+/**
+ * Get a color for a signal within a group
+ * @param {string} signalName - The name of the signal
+ * @param {number} signalIndex - The index of the signal within its group
+ * @param {string} groupName - The name of the group
+ * @param {number} groupIndex - The index of the group
+ * @returns {string} A color for the signal
+ */
+function getSignalColor(signalName: string, signalIndex: number, groupName: string, groupIndex: number): string {
+  // Get the base color for the group
+  const baseColor = getGroupColor(groupName, groupIndex);
+  
+  // For the first few signals, use the base group color with varying opacity
+  if (signalIndex < 3) {
+    const opacity = 1.0 - (signalIndex * 0.2);
+    return adjustColorOpacity(baseColor, opacity);
+  }
+  
+  // For additional signals, create variations of the base color
+  return adjustColorShade(baseColor, signalIndex);
+}
+
+/**
+ * Adjust the opacity of a color
+ * @param {string} color - The color in hex format
+ * @param {number} opacity - The opacity (0-1)
+ * @returns {string} The color with adjusted opacity
+ */
+function adjustColorOpacity(color: string, opacity: number): string {
+  // Convert hex to rgb
+  const r = parseInt(color.slice(1, 3), 16);
+  const g = parseInt(color.slice(3, 5), 16);
+  const b = parseInt(color.slice(5, 7), 16);
+  
+  return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+}
+
+/**
+ * Adjust the shade of a color
+ * @param {string} color - The color in hex format
+ * @param {number} index - The index to use for shade adjustment
+ * @returns {string} The color with adjusted shade
+ */
+function adjustColorShade(color: string, index: number): string {
+  // Convert hex to rgb
+  const r = parseInt(color.slice(1, 3), 16);
+  const g = parseInt(color.slice(3, 5), 16);
+  const b = parseInt(color.slice(5, 7), 16);
+  
+  // Adjust the shade based on the index
+  const factor = 0.8 + (index % 3) * 0.1; // Creates slight variations
+  
+  // Apply the factor and ensure values are in valid range
+  const newR = Math.min(255, Math.max(0, Math.round(r * factor)));
+  const newG = Math.min(255, Math.max(0, Math.round(g * factor)));
+  const newB = Math.min(255, Math.max(0, Math.round(b * factor)));
+  
+  // Convert back to hex
+  return `#${newR.toString(16).padStart(2, '0')}${newG.toString(16).padStart(2, '0')}${newB.toString(16).padStart(2, '0')}`;
 } 
