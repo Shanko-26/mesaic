@@ -11,6 +11,8 @@ import urllib.parse
 from data.loader import load_mat_file, load_mf4_file
 from ai.query_processor import QueryProcessor
 from ai.openai_integration import OpenAIIntegration
+from data.signal_processor import SignalProcessor
+from ai.query_engine import AIQueryEngine
 
 # Default port for the server
 PORT = 5000
@@ -18,6 +20,8 @@ PORT = 5000
 # Initialize the query processors
 query_processor = QueryProcessor()
 openai_integration = OpenAIIntegration()
+signal_processor = SignalProcessor()
+query_engine = AIQueryEngine()
 
 class DataProcessingHandler(BaseHTTPRequestHandler):
     """
@@ -61,6 +65,10 @@ class DataProcessingHandler(BaseHTTPRequestHandler):
                 self._handle_load_file(request)
             elif self.path == '/api/process-query':
                 self._handle_process_query(request)
+            elif self.path == '/api/process-signal':
+                self._handle_process_signal(request)
+            elif self.path == '/api/process-ai-query':
+                self._handle_process_ai_query(request)
             else:
                 self._handle_not_found()
                 
@@ -181,6 +189,69 @@ class DataProcessingHandler(BaseHTTPRequestHandler):
             
         except Exception as e:
             self._handle_error(str(e))
+    
+    def _handle_process_signal(self, request):
+        """Handle signal processing requests"""
+        try:
+            operation_type = request.get('operation')
+            signals_data = request.get('signals', {})
+            parameters = request.get('parameters', {}) or {}
+            
+            if not operation_type:
+                raise ValueError("No operation specified")
+            
+            # For operations that require specific signal parameters, map them from the signals array
+            signals = request.get('signals_list', [])
+            
+            # If we have a signals array and it's not already in parameters, add them
+            if operation_type in ['add', 'subtract', 'multiply', 'divide'] and len(signals) >= 2:
+                if 'signal1' not in parameters:
+                    parameters['signal1'] = signals[0]
+                if 'signal2' not in parameters:
+                    parameters['signal2'] = signals[1]
+            elif operation_type in ['abs', 'scale', 'derivative', 'filter', 'fft', 'stats'] and len(signals) >= 1:
+                if 'signal' not in parameters:
+                    parameters['signal'] = signals[0]
+            
+            # Execute the operation
+            result = signal_processor.execute_operation(operation_type, signals_data, **parameters)
+            
+            # Return the processed signal
+            self._set_headers()
+            response = {
+                'status': 'success',
+                'result': result
+            }
+            self.wfile.write(json.dumps(response).encode())
+            
+        except Exception as e:
+            self._handle_error(f"Error processing signal: {str(e)}")
+            traceback.print_exc()
+    
+    def _handle_process_ai_query(self, request):
+        """Handle AI query processing"""
+        try:
+            query = request.get('query')
+            available_signals = request.get('availableSignals', [])
+            
+            if not query:
+                raise ValueError("No query provided")
+            
+            # Process the query
+            result = query_engine.process_query(query, available_signals)
+            
+            # Return the result
+            self._set_headers()
+            response = {
+                'status': 'success',
+                'operations': [op.dict() for op in result.operations],
+                'explanation': result.explanation
+            }
+            self.wfile.write(json.dumps(response).encode())
+            
+        except Exception as e:
+            self._handle_error(f"Error processing AI query: {str(e)}")
+            traceback.print_exc()
     
     def _handle_not_found(self):
         """Handle 404 Not Found errors"""

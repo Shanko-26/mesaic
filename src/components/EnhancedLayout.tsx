@@ -29,7 +29,9 @@ import {
   PlotData
 } from '../services/visualization';
 import {
-  generateChatResponse
+  generateChatResponse,
+  processAIQuery,
+  executeSignalOperation
 } from '../services/ai';
 import { PlotArea } from './Visualization/PlotArea';
 
@@ -60,6 +62,12 @@ export function EnhancedLayout() {
   const [selectedSignals, setSelectedSignals] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
+  // State for derived signals
+  const [derivedSignals, setDerivedSignals] = useState<Record<string, {
+    data: number[];
+    metadata: Record<string, any>;
+  }>>({});
   
   // State for cursors
   const [primaryCursor, setPrimaryCursor] = useState<CursorData>({
@@ -171,7 +179,22 @@ export function EnhancedLayout() {
   // Update the plot data when file data or selected signals change
   useEffect(() => {
     if (fileData && selectedSignals.length > 0) {
-      const newPlotData = generatePlotData(fileData, selectedSignals, {
+      // Create a merged data object that includes both original and derived signals
+      const mergedData = { ...fileData.data };
+      
+      // Add derived signals to the merged data
+      Object.entries(derivedSignals).forEach(([name, signal]) => {
+        mergedData[name] = signal.data;
+      });
+      
+      // Create a merged file data object
+      const mergedFileData: FileData = {
+        ...fileData,
+        data: mergedData,
+        signals: [...fileData.signals, ...Object.keys(derivedSignals)]
+      };
+      
+      const newPlotData = generatePlotData(mergedFileData, selectedSignals, {
         title: currentFile?.name || 'Signal Visualization',
         xAxisLabel: 'Time',
         yAxisLabel: 'Value',
@@ -182,7 +205,7 @@ export function EnhancedLayout() {
     } else {
       setPlotData(undefined);
     }
-  }, [fileData, selectedSignals, currentFile, primaryCursor, diffCursor]);
+  }, [fileData, selectedSignals, currentFile, primaryCursor, diffCursor, derivedSignals]);
   
   // Handle file selection
   const handleFileSelect = async (filePath: string) => {
@@ -378,6 +401,86 @@ export function EnhancedLayout() {
     setIsSendingMessage(true);
     
     try {
+      // Check if this is a signal processing operation
+      const normalizedMessage = userMessage.text.toLowerCase();
+      const isSignalOperation = 
+        normalizedMessage.includes('multiply') || 
+        normalizedMessage.includes('add') || 
+        normalizedMessage.includes('subtract') || 
+        normalizedMessage.includes('divide') || 
+        normalizedMessage.includes('filter') || 
+        normalizedMessage.includes('derivative') || 
+        normalizedMessage.includes('absolute') || 
+        normalizedMessage.includes('abs') || 
+        normalizedMessage.includes('fft') || 
+        normalizedMessage.includes('statistics') || 
+        normalizedMessage.includes('stats');
+      
+      if (isSignalOperation && fileData) {
+        // Use the signal processing API
+        try {
+          // Get available signals
+          const availableSignals = fileData ? 
+            [...fileData.signals] : [];
+          
+          // Process the query
+          const result = await processAIQuery(userMessage.text, availableSignals);
+          
+          if (result.operations.length > 0) {
+            // Get the signals data
+            const signalsData: Record<string, number[]> = {};
+            
+            // Add original signals
+            if (fileData && fileData.data) {
+              Object.keys(fileData.data).forEach(signal => {
+                signalsData[signal] = fileData.data[signal];
+              });
+            }
+            
+            // Execute each operation
+            const newDerivedSignals: Record<string, {
+              data: number[];
+              metadata: Record<string, any>;
+            }> = {};
+            
+            for (const operation of result.operations) {
+              const opResult = await executeSignalOperation(operation, signalsData);
+              
+              // Add the result to derived signals
+              newDerivedSignals[operation.outputName] = opResult;
+              
+              // Add to signals data for potential use in subsequent operations
+              signalsData[operation.outputName] = opResult.data;
+            }
+            
+            // Update derived signals
+            setDerivedSignals(prevSignals => ({
+              ...prevSignals,
+              ...newDerivedSignals
+            }));
+            
+            // Create a response message with the results
+            const responseMessage = `${result.explanation}\n\nI've created the following new signals:\n${
+              Object.entries(newDerivedSignals)
+                .map(([name, signal]) => `- ${name}: ${signal.metadata.description || 'Processed signal'}`)
+                .join('\n')
+            }`;
+            
+            // Add assistant response to chat
+            setChatMessages(prev => [...prev, { type: 'assistant', text: responseMessage }]);
+            
+            // Add the new signals to the selected signals
+            setSelectedSignals(prev => [...prev, ...Object.keys(newDerivedSignals)]);
+            
+            setIsSendingMessage(false);
+            return;
+          }
+        } catch (error) {
+          console.error('Error processing signal operation:', error);
+          // Fall back to regular chat response
+        }
+      }
+      
       // Get cursor values for the AI service
       const cursorValues = getCursorDisplayValues();
       
@@ -559,6 +662,29 @@ export function EnhancedLayout() {
       windowSize: 5,
       method: 'movingAverage'
     });
+  };
+  
+  // Handle clear derived signals
+  const handleClearDerivedSignals = () => {
+    setDerivedSignals({});
+    
+    // Remove derived signals from selected signals
+    if (fileData) {
+      const originalSignals = fileData.signals;
+      setSelectedSignals(prev => prev.filter(signal => originalSignals.includes(signal)));
+    }
+  };
+  
+  // Handle remove derived signal
+  const handleRemoveDerivedSignal = (signalName: string) => {
+    setDerivedSignals(prev => {
+      const newSignals = { ...prev };
+      delete newSignals[signalName];
+      return newSignals;
+    });
+    
+    // Remove from selected signals
+    setSelectedSignals(prev => prev.filter(signal => signal !== signalName));
   };
   
   return (
@@ -779,6 +905,56 @@ export function EnhancedLayout() {
                         )}
                       </div>
                     </div>
+                    
+                    {/* Derived Signals Section */}
+                    {Object.keys(derivedSignals).length > 0 && (
+                      <div className="mt-4">
+                        <div className="flex justify-between items-center mb-2">
+                          <h3 className="text-sm font-medium flex items-center gap-2">
+                            <List size={14} />
+                            <span>Derived Signals</span>
+                          </h3>
+                          <button 
+                            className="text-xs px-2 py-1 bg-red-500 text-white rounded"
+                            onClick={handleClearDerivedSignals}
+                          >
+                            Clear All
+                          </button>
+                        </div>
+                        
+                        <div className="space-y-1 max-h-[calc(100vh-240px)] overflow-y-auto">
+                          {Object.entries(derivedSignals).map(([name, signal]) => (
+                            <div key={name} className="flex items-center justify-between bg-accent/20 p-1 rounded">
+                              <div className="flex items-center flex-1">
+                                <input
+                                  type="checkbox"
+                                  id={`signal-${name}`}
+                                  className="mr-2 h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                                  checked={selectedSignals.includes(name)}
+                                  onChange={(e) => handleSignalSelect(name, e.target.checked)}
+                                />
+                                <label
+                                  htmlFor={`signal-${name}`}
+                                  className="flex-1 text-sm cursor-pointer py-1"
+                                  title={signal.metadata.description || name}
+                                >
+                                  {name}
+                                  <div className="text-xs text-muted-foreground">
+                                    {signal.metadata.description || 'Derived signal'}
+                                  </div>
+                                </label>
+                              </div>
+                              <button
+                                className="text-xs px-1 py-0.5 bg-red-500 text-white rounded"
+                                onClick={() => handleRemoveDerivedSignal(name)}
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

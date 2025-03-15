@@ -4,9 +4,9 @@
   "description": "AI-Powered Collaborative Measurement & Calibration Tool",
   "main": "electron/main.js",
   "scripts": {
-    "start": "electron .",
+    "start": "next dev",
     "dev": "next dev",
-    "dev:electron": "concurrently \"npm run watch\" \"npm run start\"",
+    "dev:electron": "concurrently \"npm run watch\" \"npm run start:electron\"",
     "watch": "webpack --watch",
     "build": "next build",
     "build:electron": "webpack --mode production",
@@ -14,7 +14,8 @@
     "make": "electron-forge make",
     "python-server": "python python/server.py",
     "lint": "next lint",
-    "start:all": "concurrently -k --names \"PYTHON,NEXTJS,NODE\" -c \"bgBlue.bold,bgGreen.bold,bgMagenta.bold\" \"npm run python-server\" \"npm run dev\" \"node server/index.js\""
+    "start:all": "concurrently -k --names \"PYTHON,NEXTJS,NODE\" -c \"bgBlue.bold,bgGreen.bold,bgMagenta.bold\" \"npm run python-server\" \"npm run dev\" \"node server/index.js\"",
+    "start:electron": "electron ."
   },
   "keywords": [
     "electron",

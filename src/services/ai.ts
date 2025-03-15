@@ -4,6 +4,7 @@
 import { processQuery } from './api';
 import { getCurrentFile, FileData } from './file';
 import { PlotData, CursorData, getCursorValues, updateCursors } from './visualization';
+import { SignalOperation, AIQueryResult, DerivedSignal } from '../types/signal';
 
 export interface QueryResult {
   query: string;
@@ -605,4 +606,87 @@ function calculateCorrelation(fileData: FileData, selectedSignals: string[]): st
   }
   
   return response;
+}
+
+/**
+ * Process an AI query for signal operations
+ * @param query The natural language query
+ * @param availableSignals List of available signal names
+ * @returns The AI query result with operations and explanation
+ */
+export async function processAIQuery(
+  query: string,
+  availableSignals: string[]
+): Promise<AIQueryResult> {
+  try {
+    const response = await fetch('http://localhost:5000/api/process-ai-query', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        query,
+        availableSignals
+      }),
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    const result = await response.json();
+    
+    if (result.status === 'success') {
+      return {
+        operations: result.operations,
+        explanation: result.explanation
+      };
+    } else {
+      throw new Error(result.error || 'Unknown error processing AI query');
+    }
+  } catch (error) {
+    console.error('Error processing AI query:', error);
+    throw error;
+  }
+}
+
+/**
+ * Execute a signal operation
+ * @param operation The operation to execute
+ * @param signalsData The signals data
+ * @returns The result of the operation
+ */
+export async function executeSignalOperation(
+  operation: SignalOperation,
+  signalsData: Record<string, number[]>
+): Promise<DerivedSignal> {
+  try {
+    const response = await fetch('http://localhost:5000/api/process-signal', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        operation: operation.operation,
+        signals: signalsData,
+        signals_list: operation.signals,
+        parameters: operation.parameters
+      }),
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    const result = await response.json();
+    
+    if (result.status === 'success') {
+      return result.result as DerivedSignal;
+    } else {
+      throw new Error(result.error || 'Unknown error executing signal operation');
+    }
+  } catch (error) {
+    console.error('Error executing signal operation:', error);
+    throw error;
+  }
 } 
