@@ -166,6 +166,9 @@ def _handle_process_signal(self, request):
 - [x] Create models for signal operations
 - [x] Implement query parsing logic
 - [x] Add Python server endpoint for AI queries
+- [x] Improve error handling for incomplete queries
+- [x] Implement context-aware responses for different operation types
+- [x] Add detailed guidance with examples for users
 - [ ] Test AI query parsing with sample queries
 
 #### Key Deliverable: AI Query Engine
@@ -275,6 +278,8 @@ def _handle_process_ai_query(self, request):
 #### Tasks:
 - [x] Create frontend service for AI queries
 - [x] Update chat component to handle signal operations
+- [x] Enhance default messages with categorized examples
+- [x] Improve user guidance for signal operations
 - [ ] Enhance visualization service for derived signals
 - [ ] Add UI elements to display AI-generated signals
 - [ ] Implement error handling and user feedback
@@ -505,6 +510,33 @@ The AI Query Engine uses LangChain and OpenAI to parse natural language queries 
 
 The engine uses Pydantic models to ensure type safety and proper validation of the AI's output.
 
+### Enhanced Error Handling and User Guidance
+
+The system now provides improved handling of incomplete queries through:
+
+1. **Specialized Error Detection**:
+   - Identifies specific types of incomplete queries (filter operations, binary operations, unary operations)
+   - Extracts mentioned signals from queries to provide context-aware responses
+   - Detects operation types even when JSON parsing fails
+
+2. **Operation-Specific Guidance**:
+   - Provides tailored guidance for different operation types:
+     - Filter operations: Asks for filter type and cutoff frequency
+     - Binary operations (add, subtract, etc.): Asks for the two signals to operate on
+     - Scale operations: Asks for the scaling factor
+     - Derivative operations: Asks for the order of the derivative
+
+3. **Improved User Experience**:
+   - Offers clear examples of how to formulate complete queries
+   - References signals mentioned in the query in examples
+   - Organizes suggestions into categories (Data Analysis, Signal Processing, Interactive Analysis)
+   - Uses formatting to improve readability of guidance messages
+
+4. **Robust Fallback Mechanisms**:
+   - Implements multiple layers of fallback parsing for handling JSON errors
+   - Extracts partial information from failed queries to provide relevant guidance
+   - Maintains context even when the primary parsing method fails
+
 ### Frontend Integration
 
 The frontend integration consists of:
@@ -532,11 +564,16 @@ The frontend maintains a state of derived signals that can be used in subsequent
 - [x] Create models for signal operations
 - [x] Implement query parsing logic
 - [x] Add Python server endpoint for AI queries
+- [x] Improve error handling for incomplete queries
+- [x] Implement context-aware responses for different operation types
+- [x] Add detailed guidance with examples for users
 - [ ] Test AI query parsing with sample queries
 
 ### Phase 3: UI Integration
 - [x] Create frontend service for AI queries
 - [x] Update chat component to handle signal operations
+- [x] Enhance default messages with categorized examples
+- [x] Improve user guidance for signal operations
 - [ ] Enhance visualization service for derived signals
 - [ ] Add UI elements to display AI-generated signals
 - [ ] Implement error handling and user feedback

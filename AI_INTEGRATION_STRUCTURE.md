@@ -58,12 +58,18 @@ mesaic/
   - Uses LangChain and OpenAI to parse natural language queries
   - Extracts intended operations and parameters
   - Returns structured results that can be executed by the Signal Processor
+  - Provides enhanced error handling for incomplete queries
+  - Implements specialized handlers for different operation types
+  - Offers context-aware responses with examples for users
 - Uses Pydantic models for type safety and validation
+- Includes robust fallback parsing for handling JSON parsing errors
+- Features operation-specific guidance for filter, scale, derivative, and other operations
 
 #### 3. `python/server.py` (Updates)
 - Add new endpoints:
   - `/api/process-signal`: Execute signal processing operations
   - `/api/process-ai-query`: Process natural language queries with AI
+- Improved error handling and parameter mapping for signal operations
 
 ### Frontend
 
@@ -71,6 +77,9 @@ mesaic/
 - Add new methods:
   - `processAIQuery()`: Send queries to the AI engine
   - `executeSignalOperation()`: Execute signal operations via the API
+- Enhanced default messages with categorized examples
+- Improved user guidance for different types of operations
+- Better organization of suggestions into Data Analysis, Signal Processing, and Interactive Analysis categories
 
 #### 2. `src/services/visualization.ts` (Updates)
 - Update `generatePlotData()` to handle derived signals
