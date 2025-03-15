@@ -307,7 +307,7 @@ class SignalProcessor:
     
     def compute_derivative(self, signals_data, signal=None, order=1):
         """
-        Compute the derivative of a signal.
+        Compute the derivative of a signal with respect to time.
         
         Args:
             signals_data (dict): Dictionary of signal data.
@@ -329,13 +329,28 @@ class SignalProcessor:
         # Get signal data
         data = signals_data[signal]
         
-        # Compute derivative
-        if order == 1:
-            result_data = np.gradient(data)
-        elif order == 2:
-            result_data = np.gradient(np.gradient(data))
+        # Check if time data is available
+        if 'time' in signals_data:
+            time_data = signals_data['time']
+            
+            # Compute derivative with respect to time
+            if order == 1:
+                # First order derivative: dy/dt
+                result_data = np.gradient(data, time_data)
+            elif order == 2:
+                # Second order derivative: d²y/dt²
+                first_derivative = np.gradient(data, time_data)
+                result_data = np.gradient(first_derivative, time_data)
+            else:
+                raise ValueError(f"Unsupported derivative order: {order}")
         else:
-            raise ValueError(f"Unsupported derivative order: {order}")
+            # If time data is not available, use sample index
+            if order == 1:
+                result_data = np.gradient(data)
+            elif order == 2:
+                result_data = np.gradient(np.gradient(data))
+            else:
+                raise ValueError(f"Unsupported derivative order: {order}")
         
         return {
             'data': result_data.tolist(),

@@ -34,6 +34,7 @@ import {
   executeSignalOperation
 } from '../services/ai';
 import { PlotArea } from './Visualization/PlotArea';
+import { StatisticsDisplay } from './StatisticsDisplay';
 
 /**
  * EnhancedLayout - The main UI layout for MesAIc
@@ -45,6 +46,16 @@ import { PlotArea } from './Visualization/PlotArea';
  * - AI chat and data analysis
  * - Annotation system
  */
+declare global {
+  interface Window {
+    electron?: {
+      fileSystem: {
+        openFileDialog: (extensions: string[]) => Promise<string | null>;
+      };
+    };
+  }
+}
+
 export function EnhancedLayout() {
   // State for panel visibility
   const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false);
@@ -390,19 +401,17 @@ export function EnhancedLayout() {
   // Update the cursorValues calculation
   const cursorValues = getCursorDisplayValues();
   
-  // Update the handleSendMessage function to use the positionCursorAtTime function
-  const handleSendMessage = async () => {
-    if (!chatInput.trim()) return;
-    
+  // Update the handleSendMessage function to handle incomplete queries
+  const handleSendMessage = async (message: string) => {
     // Add user message to chat
-    const userMessage = { type: 'user' as const, text: chatInput.trim() };
+    const userMessage = { type: 'user' as const, text: message };
     setChatMessages(prev => [...prev, userMessage]);
     setChatInput('');
     setIsSendingMessage(true);
     
     try {
       // Check if this is a signal processing operation
-      const normalizedMessage = userMessage.text.toLowerCase();
+      const normalizedMessage = message.toLowerCase();
       const isSignalOperation = 
         normalizedMessage.includes('multiply') || 
         normalizedMessage.includes('add') || 
@@ -424,9 +433,104 @@ export function EnhancedLayout() {
             [...fileData.signals] : [];
           
           // Process the query
-          const result = await processAIQuery(userMessage.text, availableSignals);
+          const result = await processAIQuery(message, availableSignals);
           
           if (result.operations.length > 0) {
+            // Check if any operations have missing information
+            const incompleteOperations = result.operations.filter(op => {
+              // Check for required signals based on operation type
+              if (['add', 'subtract', 'multiply', 'divide'].includes(op.operation) && op.signals.length < 2) {
+                return true;
+              }
+              if (['abs', 'scale', 'derivative', 'filter', 'fft', 'stats'].includes(op.operation) && op.signals.length < 1) {
+                return true;
+              }
+              
+              // Check for required parameters based on operation type
+              if (op.operation === 'scale' && (!op.parameters || op.parameters.factor === undefined)) {
+                return true;
+              }
+              if (op.operation === 'derivative' && (!op.parameters || op.parameters.order === undefined)) {
+                return true;
+              }
+              if (op.operation === 'filter') {
+                if (!op.parameters) return true;
+                if (op.parameters.filter_type === undefined) return true;
+                if (op.parameters.cutoff_freq === undefined) return true;
+                if (['bandpass', 'bandstop'].includes(op.parameters.filter_type) && 
+                    (!Array.isArray(op.parameters.cutoff_freq) || op.parameters.cutoff_freq.length !== 2)) {
+                  return true;
+                }
+              }
+              if (op.operation === 'fft' && (!op.parameters || op.parameters.sample_rate === undefined)) {
+                return true;
+              }
+              
+              return false;
+            });
+            
+            if (incompleteOperations.length > 0) {
+              // Create a response asking for more information
+              let responseMessage = "I need more information to process your request:\n\n";
+              
+              incompleteOperations.forEach(op => {
+                responseMessage += `For the ${op.operation} operation:\n`;
+                
+                // Check for missing signals
+                if (['add', 'subtract', 'multiply', 'divide'].includes(op.operation)) {
+                  if (!op.signals || op.signals.length === 0) {
+                    responseMessage += `- Please specify which two signals to ${op.operation}.\n`;
+                    responseMessage += `  Available signals: ${availableSignals.join(', ')}\n`;
+                  } else if (op.signals.length === 1) {
+                    responseMessage += `- You specified ${op.signals[0]}, but I need one more signal to ${op.operation} with.\n`;
+                    responseMessage += `  Available signals: ${availableSignals.filter(s => s !== op.signals[0]).join(', ')}\n`;
+                  }
+                }
+                
+                if (['abs', 'scale', 'derivative', 'filter', 'fft', 'stats'].includes(op.operation) && (!op.signals || op.signals.length === 0)) {
+                  responseMessage += `- Please specify which signal to apply the ${op.operation} operation to.\n`;
+                  responseMessage += `  Available signals: ${availableSignals.join(', ')}\n`;
+                }
+                
+                // Check for missing parameters
+                if (op.operation === 'scale' && (!op.parameters || op.parameters.factor === undefined)) {
+                  responseMessage += `- Please specify the scaling factor (e.g., 2.5 to multiply by 2.5).\n`;
+                }
+                
+                if (op.operation === 'derivative') {
+                  if (!op.parameters || op.parameters.order === undefined) {
+                    responseMessage += `- Please specify the derivative order (1 for first derivative, 2 for second derivative).\n`;
+                  }
+                }
+                
+                if (op.operation === 'filter') {
+                  if (!op.parameters || op.parameters.filter_type === undefined) {
+                    responseMessage += `- Please specify the filter type (lowpass, highpass, bandpass, or bandstop).\n`;
+                  }
+                  
+                  if (!op.parameters || op.parameters.cutoff_freq === undefined) {
+                    responseMessage += `- Please specify the cutoff frequency (between 0 and 1).\n`;
+                  } else if (['bandpass', 'bandstop'].includes(op.parameters.filter_type) && 
+                            (!Array.isArray(op.parameters.cutoff_freq) || op.parameters.cutoff_freq.length !== 2)) {
+                    responseMessage += `- For ${op.parameters.filter_type} filter, please specify two cutoff frequencies (low and high).\n`;
+                  }
+                }
+                
+                if (op.operation === 'fft' && (!op.parameters || op.parameters.sample_rate === undefined)) {
+                  responseMessage += `- Please specify the sample rate for the FFT operation.\n`;
+                }
+                
+                responseMessage += '\n';
+              });
+              
+              responseMessage += "Please provide the missing information by responding with a more specific request.";
+              
+              // Add assistant response to chat
+              setChatMessages(prev => [...prev, { type: 'assistant', text: responseMessage }]);
+              setIsSendingMessage(false);
+              return;
+            }
+            
             // Get the signals data
             const signalsData: Record<string, number[]> = {};
             
@@ -486,37 +590,51 @@ export function EnhancedLayout() {
       
       // Generate a response based on the message and available data using the AI service
       const response = await generateChatResponse(
-        userMessage.text,
+        message,
         fileData,
         selectedSignals,
         { primaryCursor, diffCursor },
         cursorValues
       );
       
-      // If the response includes cursor positioning information, update the cursor
+      // Simplify the cursor positioning code to avoid linter errors
       if (response.cursorPosition && fileData && fileData.data.time) {
-        // Use the visualization service to position the cursor
-        const newCursor = positionCursorAtTime(
-          'plot-container',
-          primaryCursor,
-          response.cursorPosition.x,
-          fileData.data.time
-        );
+        // Create a basic cursor data object
+        const cursorData: CursorData = {
+          x: response.cursorPosition.x,
+          visible: true,
+          color: 'primary'
+        };
         
-        // Update the cursor state
-        setPrimaryCursor(newCursor);
+        try {
+          // Call the function with the correct arguments
+          const newCursor = positionCursorAtTime(
+            'plot-container',
+            cursorData,
+            response.cursorPosition.x,
+            fileData.data.time
+          );
+          
+          if (newCursor) {
+            setPrimaryCursor(newCursor);
+          }
+        } catch (error) {
+          console.error('Error positioning cursor:', error);
+        }
       }
       
       // Add assistant response to chat
-      setTimeout(() => {
-        setChatMessages(prev => [...prev, { type: 'assistant', text: response.message }]);
-        setIsSendingMessage(false);
-      }, 500); // Simulate a slight delay for realism
+      setChatMessages(prev => [...prev, { type: 'assistant', text: response.message }]);
+      
     } catch (error) {
-      console.error('Error generating chat response:', error);
-      setChatMessages(prev => [...prev, { type: 'assistant', text: "I'm sorry, I encountered an error while processing your request." }]);
-      setIsSendingMessage(false);
+      console.error('Error sending message:', error);
+      setChatMessages(prev => [...prev, { 
+        type: 'assistant', 
+        text: 'Sorry, I encountered an error processing your request. Please try again.' 
+      }]);
     }
+    
+    setIsSendingMessage(false);
   };
   
   // Handle quick chat suggestions
@@ -924,32 +1042,44 @@ export function EnhancedLayout() {
                         
                         <div className="space-y-1 max-h-[calc(100vh-240px)] overflow-y-auto">
                           {Object.entries(derivedSignals).map(([name, signal]) => (
-                            <div key={name} className="flex items-center justify-between bg-accent/20 p-1 rounded">
-                              <div className="flex items-center flex-1">
-                                <input
-                                  type="checkbox"
-                                  id={`signal-${name}`}
-                                  className="mr-2 h-4 w-4 rounded border-border text-primary focus:ring-primary"
-                                  checked={selectedSignals.includes(name)}
-                                  onChange={(e) => handleSignalSelect(name, e.target.checked)}
-                                />
-                                <label
-                                  htmlFor={`signal-${name}`}
-                                  className="flex-1 text-sm cursor-pointer py-1"
-                                  title={signal.metadata.description || name}
+                            <div key={name} className="flex flex-col bg-accent/20 p-1 rounded mb-2">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center flex-1">
+                                  <input
+                                    type="checkbox"
+                                    id={`signal-${name}`}
+                                    className="mr-2 h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                                    checked={selectedSignals.includes(name)}
+                                    onChange={(e) => handleSignalSelect(name, e.target.checked)}
+                                  />
+                                  <label
+                                    htmlFor={`signal-${name}`}
+                                    className="flex-1 text-sm cursor-pointer py-1"
+                                    title={signal.metadata.description || name}
+                                  >
+                                    {name}
+                                    <div className="text-xs text-muted-foreground">
+                                      {signal.metadata.description || 'Derived signal'}
+                                    </div>
+                                  </label>
+                                </div>
+                                <button
+                                  className="text-xs px-1 py-0.5 bg-red-500 text-white rounded"
+                                  onClick={() => handleRemoveDerivedSignal(name)}
                                 >
-                                  {name}
-                                  <div className="text-xs text-muted-foreground">
-                                    {signal.metadata.description || 'Derived signal'}
-                                  </div>
-                                </label>
+                                  Remove
+                                </button>
                               </div>
-                              <button
-                                className="text-xs px-1 py-0.5 bg-red-500 text-white rounded"
-                                onClick={() => handleRemoveDerivedSignal(name)}
-                              >
-                                Remove
-                              </button>
+                              
+                              {/* Display statistics if available */}
+                              {signal.metadata.statistics && (
+                                <div className="mt-2">
+                                  <StatisticsDisplay 
+                                    statistics={signal.metadata.statistics} 
+                                    signalName={name} 
+                                  />
+                                </div>
+                              )}
                             </div>
                           ))}
                         </div>
@@ -1245,13 +1375,13 @@ export function EnhancedLayout() {
                           onKeyDown={(e) => {
                             if (e.key === 'Enter' && !e.shiftKey) {
                               e.preventDefault();
-                              handleSendMessage();
+                              handleSendMessage(chatInput.trim());
                             }
                           }}
                         ></textarea>
                         <button 
                           className="p-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50"
-                          onClick={handleSendMessage}
+                          onClick={() => handleSendMessage(chatInput.trim())}
                           disabled={!chatInput.trim() || isSendingMessage}
                         >
                           Send

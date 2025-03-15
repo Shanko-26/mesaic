@@ -293,7 +293,7 @@ export async function generateChatResponse(
   
   // Default response for other queries
   return { 
-    message: "I can help you analyze your data. Try asking about:\n\n- Maximum or minimum values\n- Average values\n- Comparing signals\n- Cursor positions\n- Correlation between signals\n\nOr try positioning a cursor on the plot and ask about the values at that position."
+    message: "I can help you analyze and process your signal data. Try asking about:\n\n**Data Analysis:**\n- \"What's the maximum value of vehicleSpeed?\"\n- \"Calculate the average throttlePosition\"\n- \"Compare engineRPM and vehicleSpeed\"\n- \"What's the correlation between throttlePosition and engineRPM?\"\n\n**Signal Processing:**\n- \"Apply a lowpass filter to vehicleSpeed with cutoff frequency 0.1\"\n- \"Calculate the derivative of vehicleSpeed\"\n- \"Add vehicleSpeed and throttlePosition\"\n- \"Scale engineRPM by a factor of 0.5\"\n- \"Compute statistics for brakePosition\"\n\n**Interactive Analysis:**\n- Position a cursor on the plot and ask \"What are the values at this position?\"\n- \"Show me the FFT of vehicleSpeed with sample rate 100\"\n\nYou can also combine operations to perform more complex analysis."
   };
 }
 
@@ -661,6 +661,49 @@ export async function executeSignalOperation(
   signalsData: Record<string, number[]>
 ): Promise<DerivedSignal> {
   try {
+    // Generate a meaningful name if outputName is undefined
+    if (!operation.outputName || operation.outputName === 'undefined') {
+      // Create a descriptive name based on the operation and signals
+      switch (operation.operation) {
+        case 'add':
+          operation.outputName = `${operation.signals[0]}_plus_${operation.signals[1]}`;
+          break;
+        case 'subtract':
+          operation.outputName = `${operation.signals[0]}_minus_${operation.signals[1]}`;
+          break;
+        case 'multiply':
+          operation.outputName = `${operation.signals[0]}_times_${operation.signals[1]}`;
+          break;
+        case 'divide':
+          operation.outputName = `${operation.signals[0]}_divided_by_${operation.signals[1]}`;
+          break;
+        case 'abs':
+          operation.outputName = `abs_${operation.signals[0]}`;
+          break;
+        case 'scale':
+          const factor = operation.parameters?.factor || 1;
+          operation.outputName = `${operation.signals[0]}_scaled_${factor}`;
+          break;
+        case 'derivative':
+          const order = operation.parameters?.order || 1;
+          operation.outputName = `derivative${order}_${operation.signals[0]}`;
+          break;
+        case 'filter':
+          const filterType = operation.parameters?.filter_type || 'lowpass';
+          const cutoff = operation.parameters?.cutoff_freq || 0.1;
+          operation.outputName = `${filterType}_filtered_${operation.signals[0]}`;
+          break;
+        case 'fft':
+          operation.outputName = `fft_${operation.signals[0]}`;
+          break;
+        case 'stats':
+          operation.outputName = `stats_${operation.signals[0]}`;
+          break;
+        default:
+          operation.outputName = `processed_${operation.signals[0]}`;
+      }
+    }
+    
     const response = await fetch('http://localhost:5000/api/process-signal', {
       method: 'POST',
       headers: {

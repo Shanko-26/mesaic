@@ -98,7 +98,7 @@ class QueryProcessor:
             return self._process_summary_query(query, data)
         else:
             return {
-                'answer': "I'm not sure how to answer that question about the data. Try asking about maximum, minimum, or average values, correlations between signals, anomalies, or a general summary of the data.",
+                'answer': "I'm not sure how to answer that question about the data. Try asking about:\n\n**Data Analysis:**\n- Maximum or minimum values (e.g., \"What's the maximum vehicleSpeed?\")\n- Average values and statistics\n- Correlations between signals\n- Trends and patterns\n\n**Signal Processing:**\n- Filtering signals (e.g., \"Apply a lowpass filter to vehicleSpeed\")\n- Calculating derivatives\n- Combining signals (add, subtract, multiply, divide)\n- Frequency analysis (FFT)\n\nYou can also try positioning a cursor on the plot for point-specific analysis.",
                 'metadata': {
                     'confidence': 0.3,
                     'processingTime': 0.3
